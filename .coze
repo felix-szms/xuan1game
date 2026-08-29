@@ -1,0 +1,25 @@
+[project]
+sub_id = "13809c15"
+name = "tide-prison-ops"
+entrypoint = "index.html"
+requires = ["nodejs-24"]
+project_type = "web"
+version = "0.0.35"
+
+[preview]
+preview_enable = "enabled"
+
+[dev]
+build = ["bash", "scripts/build.sh"]
+run = ["bash", "scripts/run.sh"]
+
+[deploy]
+build = ["bash", "scripts/deploy_build.sh"]
+run = ["bash", "scripts/deploy_run.sh"]
+
+[deploy.profile]
+kind = "service"
+flavor = "web"
+
+[subprojects]
+path = ["."]
