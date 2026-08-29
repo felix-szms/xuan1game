@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>潮汐监狱 · TIDE PRISON OPS</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #05080c; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; color: #cfe3ee;
+         -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; touch-action: none; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; display: none; }
+  .hud-tl { position: absolute; top: 14px; left: 16px; }
+  .hp-wrap { width: 260px; }
+  .hp-label { font-size: 11px; letter-spacing: 2px; color: #8fb4c9; margin-bottom: 4px; text-shadow: 0 1px 2px #000; }
+  .hp-bar { height: 10px; background: rgba(10,20,28,.7); border: 1px solid rgba(140,190,220,.35); border-radius: 2px; overflow: hidden; }
+  .hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg,#3fae6a,#7fdca0); transition: width .15s; }
+  .hp-fill.low { background: linear-gradient(90deg,#b03030,#ff6a5a); }
+  .armor-bar { margin-top: 4px; height: 6px; background: rgba(10,20,28,.7); border: 1px solid rgba(140,190,220,.25); border-radius: 2px; overflow: hidden; }
+  .armor-fill { height: 100%; width: 100%; background: linear-gradient(90deg,#3a7fb0,#8fd0ff); transition: width .15s; }
+
+  .hud-tr { position: absolute; top: 14px; right: 16px; text-align: right; }
+  .loot-value { font-size: 20px; font-weight: 700; color: #ffd76a; text-shadow: 0 1px 3px #000; }
+  .loot-value small { font-size: 11px; color: #c9b06a; letter-spacing: 2px; }
+  .loot-list { margin-top: 6px; font-size: 11px; color: #a9c6d6; text-align: right; line-height: 1.5; text-shadow: 0 1px 2px #000; }
+  .zone-timer { margin-top: 6px; font-size: 12px; color: #7fd0ff; letter-spacing: 1px; text-shadow: 0 1px 2px #000; }
+
+  #ammo { position: absolute; right: 18px; bottom: 18px; text-align: right; text-shadow: 0 2px 4px #000; }
+  #ammo .gun { font-size: 12px; letter-spacing: 3px; color: #8fb4c9; }
+  #ammo .num { font-size: 34px; font-weight: 700; color: #eaf6ff; }
+  #ammo .num small { font-size: 16px; color: #7d97a8; }
+  #ammo .num.empty { color: #ff5a4a; }
+
+  #minimap { position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+             width: 170px; height: 170px; border-radius: 50%;
+             border: 2px solid rgba(140,190,220,.35); background: rgba(6,12,18,.65); }
+
+  #crosshair { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+  #crosshair span { position: absolute; background: rgba(230,245,255,.9); box-shadow: 0 0 2px #000; }
+  #crosshair .v { width: 2px; height: 9px; left: -1px; }
+  #crosshair .h { width: 9px; height: 2px; top: -1px; }
+  #crosshair .t { top: -15px; } #crosshair .b { top: 7px; }
+  #crosshair .l { left: -15px; } #crosshair .r { left: 7px; }
+
+  #hitmarker { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px;
+               opacity: 0; transition: opacity .25s; }
+  #hitmarker::before, #hitmarker::after { content: ""; position: absolute; left: 12px; top: 2px; width: 2px; height: 22px; background: #ffdd66; }
+  #hitmarker::before { transform: rotate(45deg); } #hitmarker::after { transform: rotate(-45deg); }
+  #hitmarker.kill::before, #hitmarker.kill::after { background: #ff4433; }
+
+  #vignette { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .3s;
+              background: radial-gradient(ellipse at center, transparent 55%, rgba(160,20,10,.55) 100%); }
+
+  #killfeed { position: absolute; top: 200px; right: 16px; text-align: right; font-size: 12px; line-height: 1.7; }
+  #killfeed div { background: rgba(8,16,24,.55); padding: 2px 8px; border-radius: 2px; margin-top: 4px; }
+
+  #interact-tip { position: absolute; left: 50%; top: 58%; transform: translateX(-50%);
+                  font-size: 14px; color: #ffe9a8; text-shadow: 0 1px 3px #000; background: rgba(10,18,26,.55);
+                  border: 1px solid rgba(255,215,110,.35); padding: 6px 14px; border-radius: 3px; display: none; }
+  #interact-tip b { color: #fff; }
+
+  #extract-banner { position: absolute; left: 50%; top: 34%; transform: translateX(-50%);
+                    font-size: 22px; letter-spacing: 6px; color: #6affb0; text-shadow: 0 0 12px rgba(60,255,150,.6);
+                    display: none; text-align: center; }
+  #extract-banner .sub { font-size: 13px; letter-spacing: 2px; color: #bdf5d6; margin-top: 6px; }
+
+  .toast-center { position: absolute; left: 50%; top: 44%; transform: translate(-50%,-50%);
+                  font-size: 16px; color: #ffd76a; text-shadow: 0 1px 4px #000; opacity: 0; transition: opacity .4s; }
+
+  /* ---------- 触屏控件 ---------- */
+  #touchui { position: fixed; inset: 0; z-index: 20; display: none; pointer-events: none; }
+  .tbtn { position: absolute; pointer-events: auto; border-radius: 50%; border: 2px solid rgba(160,210,240,.5);
+          background: rgba(16,30,42,.45); color: #dff2ff; display: flex; align-items: center; justify-content: center;
+          font-size: 13px; font-weight: 600; letter-spacing: 1px; }
+  .tbtn:active { background: rgba(90,150,200,.55); }
+  #t-fire { right: 34px; bottom: 110px; width: 92px; height: 92px; font-size: 15px; }
+  #t-jump { right: 150px; bottom: 60px; width: 58px; height: 58px; }
+  #t-crouch { right: 160px; bottom: 150px; width: 58px; height: 58px; }
+  #t-reload { right: 40px; bottom: 230px; width: 58px; height: 58px; }
+  #t-use { left: 34px; bottom: 210px; width: 64px; height: 64px; border-color: rgba(255,215,110,.6); color: #ffe9a8; }
+  #joy { position: absolute; left: 40px; bottom: 50px; width: 130px; height: 130px; border-radius: 50%;
+         border: 2px solid rgba(160,210,240,.35); background: rgba(16,30,42,.35); pointer-events: auto; }
+  #joy-knob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px;
+              border-radius: 50%; background: rgba(150,200,240,.5); border: 2px solid rgba(220,240,255,.6); }
+
+  /* ---------- 开始 / 结算界面 ---------- */
+  #menu { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center;
+          justify-content: center; background: linear-gradient(180deg, rgba(4,8,14,.92), rgba(8,16,26,.96)); }
+  #menu h1 { font-size: 44px; letter-spacing: 10px; color: #eaf6ff; text-shadow: 0 0 24px rgba(80,160,220,.5); }
+  #menu h1 em { font-style: normal; color: #ff7a3c; }
+  #menu .sub { margin-top: 8px; font-size: 13px; letter-spacing: 4px; color: #7d9db2; }
+  .panel { margin-top: 34px; background: rgba(12,22,32,.8); border: 1px solid rgba(120,180,220,.25);
+           border-radius: 6px; padding: 22px 30px; max-width: 640px; }
+  .panel h3 { font-size: 14px; letter-spacing: 3px; color: #8fd0ff; margin-bottom: 10px; }
+  .panel p, .panel li { font-size: 13px; color: #b9d2e0; line-height: 1.9; }
+  .panel b { color: #ffd76a; font-weight: 600; }
+  .keys { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 28px; margin-top: 6px; }
+  .mode-row { display: flex; gap: 14px; margin-top: 26px; }
+  .mode-btn { pointer-events: auto; cursor: pointer; padding: 14px 38px; font-size: 16px; letter-spacing: 3px; color: #eaf6ff;
+              background: rgba(30,60,86,.6); border: 1px solid rgba(130,190,230,.45); border-radius: 4px; transition: all .2s; }
+  .mode-btn:hover { background: rgba(50,100,140,.8); border-color: #8fd0ff; }
+  .mode-btn small { display: block; font-size: 11px; color: #9db8c9; margin-top: 4px; letter-spacing: 1px; }
+  #end-screen { position: fixed; inset: 0; z-index: 31; display: none; flex-direction: column;
+                align-items: center; justify-content: center;
+                background: linear-gradient(180deg, rgba(4,8,14,.9), rgba(8,16,26,.95)); }
+  #end-screen .result { font-size: 40px; letter-spacing: 8px; }
+  #end-screen .result.win { color: #6affb0; text-shadow: 0 0 20px rgba(60,255,150,.6); }
+  #end-screen .result.lose { color: #ff5a4a; text-shadow: 0 0 20px rgba(255,70,50,.5); }
+  #end-screen .stats { margin-top: 14px; font-size: 14px; color: #cfe3ee; line-height: 2; text-align: center; }
+  #end-screen .stats b { color: #ffd76a; }
+  #loading { position: fixed; inset: 0; z-index: 40; background: #05080c; display: flex; align-items: center;
+             justify-content: center; font-size: 14px; letter-spacing: 4px; color: #7d9db2; }
+
+  #hud.touch #ammo { bottom: 215px; right: 20px; }
+  #hud.touch #ammo .num { font-size: 24px; }
+  #hud.touch .hud-tl { top: 10px; left: 12px; }
+  #hud.touch .hp-wrap { width: 180px; }
+  #hud.touch #minimap { width: 110px; height: 110px; }
+
+  @media (max-width: 820px) {
+    #menu h1 { font-size: 30px; }
+    .panel { max-width: 90vw; padding: 16px; }
+    .keys { grid-template-columns: 1fr; }
+    #minimap { width: 120px; height: 120px; }
+  }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="hud">
+    <div class="hud-tl">
+      <div class="hp-label">生命值 HEALTH</div>
+      <div class="hp-wrap">
+        <div class="hp-bar"><div class="hp-fill" id="hp-fill"></div></div>
+        <div class="armor-bar"><div class="armor-fill" id="armor-fill"></div></div>
+      </div>
+    </div>
+    <div class="hud-tr">
+      <div class="loot-value"><small>物资价值 </small><span id="loot-val">0</span> <small>¥</small></div>
+      <div class="loot-list" id="loot-list"></div>
+      <div class="zone-timer" id="zone-timer"></div>
+    </div>
+    <canvas id="minimap" width="340" height="340"></canvas>
+    <div id="crosshair">
+      <span class="v t"></span><span class="v b"></span><span class="h l"></span><span class="h r"></span>
+    </div>
+    <div id="hitmarker"></div>
+    <div id="vignette"></div>
+    <div id="killfeed"></div>
+    <div id="interact-tip"></div>
+    <div id="extract-banner">撤离中 EXTRACTING<div class="sub" id="extract-progress">保持位于撤离区 5 秒</div></div>
+    <div class="toast-center" id="toast"></div>
+    <div id="ammo">
+      <div class="gun" id="gun-name">AS VAL · 突击步枪</div>
+      <div class="num"><span id="ammo-cur">30</span><small> / <span id="ammo-res">120</span></small></div>
+    </div>
+  </div>
+
+  <div id="touchui">
+    <div id="joy"><div id="joy-knob"></div></div>
+    <div class="tbtn" id="t-fire">射击</div>
+    <div class="tbtn" id="t-jump">跳</div>
+    <div class="tbtn" id="t-crouch">蹲</div>
+    <div class="tbtn" id="t-reload">换弹</div>
+    <div class="tbtn" id="t-use">互动</div>
+  </div>
+
+  <div id="menu">
+    <h1>潮汐<em>监狱</em></h1>
+    <div class="sub">TIDE PRISON OPS — 战术撤离行动</div>
+    <div class="panel" id="brief-panel">
+      <h3>行动简报</h3>
+      <p>你孤身渗透进被潮水包围的废弃监狱。搜索各处物资箱收集有价值的装备，击退盘踞的武装看守，
+         最后抵达<span style="color:#6affb0">码头撤离点（地图边缘绿色标记）</span>并停留 5 秒完成撤离。</p>
+      <div class="keys">
+        <p><b>W A S D</b> — 移动　<b>Shift</b> — 疾跑</p>
+        <p><b>鼠标左键</b> — 射击　<b>R</b> — 换弹</p>
+        <p><b>C</b> — 蹲伏　<b>空格</b> — 跳跃</p>
+        <p><b>E / F</b> — 搜刮互动</p>
+      </div>
+      <p style="margin-top:10px;color:#7d9db2">被击倒即行动失败，搜刮到的物资全部丢失。留意脚步声与枪声。</p>
+    </div>
+    <div class="mode-row">
+      <div class="mode-btn" id="btn-pc">电脑模式<small>键鼠操作 · 点击画面锁定鼠标</small></div>
+      <div class="mode-btn" id="btn-pad">平板模式<small>双摇杆触屏操作</small></div>
+    </div>
+  </div>
+
+  <div id="end-screen">
+    <div class="result win" id="end-result">撤离成功</div>
+    <div class="stats" id="end-stats"></div>
+    <div class="mode-row">
+      <div class="mode-btn" id="btn-restart">再次行动</div>
+    </div>
+  </div>
+
+  <div id="loading">正在部署至潮汐监狱 …</div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
