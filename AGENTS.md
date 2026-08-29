@@ -47,7 +47,7 @@
 - **预览**：`bash scripts/run.sh` 启动 Vite dev server，端口从 `.preview` 读取（默认 5000）
 - **构建**：`pnpm run build` → 产物输出到 `dist/`
 - **项目类型**：web（纯前端 SPA，无后端）
-- **部署**：静态文件部署，`dist/` 目录可由任意静态服务器承载
+- **部署**：`scripts/deploy_build.sh`（安装依赖 + vite build）→ `scripts/deploy_run.sh`（`node scripts/serve_dist.js` 零依赖静态服务器承载 dist/，监听 0.0.0.0:5000）
 
 ## 用户偏好与长期约束
 
@@ -56,6 +56,7 @@
 
 ## 常见问题和预防
 
+- 部署环境禁止在 run 脚本里用 `npx serve` 等需要临时下载包的命令：FaaS 启动超时仅 30 秒，临时安装会触发 `function start timed out`；必须保证 run 阶段零安装、启动即监听 0.0.0.0:5000（已改用内置模块实现的 `scripts/serve_dist.js`）
 - Vite dev server 必须绑定 `0.0.0.0`，不能绑定 `127.0.0.1`
 - 端口从 `.preview` 文件的 `expose_port` 读取，不 hardcode
 - Three.js 场景较重，构建 chunkSizeWarningLimit 已设为 1200KB
