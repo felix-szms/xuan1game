@@ -46,13 +46,56 @@ export class LootManager {
       [-48, -54], [-26, -50], [-12, -42], [-40, -40], [-24, -28],
       [24, -54], [40, -46], [46, -32], [30, -34],
       [-34, 22], [-18, 36], [10, 28], [30, 14], [44, 32],
-      [-40, 44], [-6, 50], [20, 50], [54, 6], [-54, 30], [8, 8]
+      [-40, 44], [-6, 50], [20, 50], [54, 6], [-54, 30], [8, 8],
+      // 牢房内部与走廊、工坊补充点位（过滤后保证 14 个可用）
+      [-48.5, -52], [-41.5, -52], [-34.5, -52], [-27.5, -52], [-20.5, -52], [-13.5, -52],
+      [-48.5, -29], [-41.5, -29], [-34.5, -29], [-27.5, -29], [-20.5, -29], [-13.5, -29],
+      [-44, -41], [-36, -41], [-20, -41], [-8, -41],
+      [24, -52], [38, -52], [30, -32], [44, -50]
     ];
     // 加密保险箱候选点位（屋内/掩体旁）
     this.safeSpawns = [
       [-48, -41], [-30, -41], [-12, -41], [28, -44], [44, -36], [-36, 33]
     ];
     this._spawnAll();
+    this._buildExtractMarker();
+  }
+
+  // 撤离点视觉标记：地面光圈 + 光柱 + 小屋
+  _buildExtractMarker() {
+    const p = this.world.extractPoint;
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(this.world.extractRadius - 0.6, this.world.extractRadius, 48),
+      new THREE.MeshBasicMaterial({ color: 0x30ff90, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(p.x, 0.06, p.z);
+    this.scene.add(ring);
+    this.extractRing = ring;
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(this.world.extractRadius * 0.55, this.world.extractRadius * 0.55, 26, 24, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x30ff90, transparent: true, opacity: 0.05, side: THREE.DoubleSide, depthWrite: false })
+    );
+    beam.position.set(p.x, 13, p.z);
+    this.scene.add(beam);
+    this.extractBeam = beam;
+    const hut = new THREE.Mesh(
+      new THREE.BoxGeometry(4, 2.6, 3),
+      new THREE.MeshStandardMaterial({ color: 0x2e4a3a, roughness: 0.8 })
+    );
+    hut.position.set(p.x + 6, 1.3, p.z - 3);
+    hut.castShadow = true;
+    this.scene.add(hut);
+    this.hut = hut;
+  }
+
+  // 每局撤离点随机化：把光圈/光柱/小屋迁移到新点位
+  setExtractPoint(p) {
+    this.extractRing.position.set(p.x, 0.06, p.z);
+    this.extractBeam.position.set(p.x, 13, p.z);
+    const hx = p.x + (p.x > 0 ? -6 : 6);
+    const hz = p.z + (p.z > 0 ? -3 : 3);
+    this.hut.position.set(hx, 1.3, hz);
   }
 
   // 每局开始时调用：清空上一局所有容器（含已开启的），全部重新随机布置
@@ -72,6 +115,15 @@ export class LootManager {
     this._spawnAll();
   }
 
+  // 刷新点校验：与任何碰撞体保持间距，避免箱子嵌进墙/集装箱导致无法靠近搜刮
+  _pointBlocked(x, z, pad = 0.95) {
+    for (const c of this.world.colliders) {
+      if (c.max.y < 0.3) continue; // 忽略地面
+      if (x + pad > c.min.x && x - pad < c.max.x && z + pad > c.min.z && z - pad < c.max.z) return true;
+    }
+    return false;
+  }
+
   _spawnAll() {
     this._spawnCrates(14);
     this._spawnSafes(2);
@@ -84,10 +136,11 @@ export class LootManager {
 
   _spawnCrates(count) {
     const shuffled = [...this.spawns].sort(() => Math.random() - 0.5);
+    const free = shuffled.filter(([x, z]) => !this._pointBlocked(x, z));
     const crateM = new THREE.MeshStandardMaterial({ map: woodTexture(512, 1, '#56603f'), roughness: 0.88, metalness: 0.15 });
     const stripM = new THREE.MeshStandardMaterial({ color: 0xc9a53a, roughness: 0.4, metalness: 0.7, emissive: 0x332200 });
-    for (let i = 0; i < count; i++) {
-      const [x, z] = shuffled[i];
+    for (let i = 0; i < Math.min(count, free.length); i++) {
+      const [x, z] = free[i];
       const g = new THREE.Group();
       const box = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.8, 0.8), crateM);
       box.position.y = 0.4;
@@ -109,13 +162,14 @@ export class LootManager {
 
   _spawnSafes(count) {
     const shuffled = [...this.safeSpawns].sort(() => Math.random() - 0.5);
+    const free = shuffled.filter(([x, z]) => !this._pointBlocked(x, z, 1.15));
     const bodyM = new THREE.MeshStandardMaterial({ map: metalTexture(256, 1, '#22323e'), roughness: 0.35, metalness: 0.8 });
     const glowM = new THREE.MeshStandardMaterial({
       color: 0x0a3a44, roughness: 0.3, metalness: 0.6,
       emissive: 0x00c8ff, emissiveIntensity: 0.9
     });
-    for (let i = 0; i < count; i++) {
-      const [x, z] = shuffled[i];
+    for (let i = 0; i < Math.min(count, free.length); i++) {
+      const [x, z] = free[i];
       const g = new THREE.Group();
       const body = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.3, 0.75), bodyM);
       body.position.y = 0.65;

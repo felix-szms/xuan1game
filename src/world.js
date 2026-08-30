@@ -18,6 +18,17 @@ export class World {
     this.spawnPoint = new THREE.Vector3(-52, 0, 40);
     this.extractPoint = new THREE.Vector3(0, 0, 84);
     this.extractRadius = 7;
+    // 每局随机的出生点 / 撤离点候选
+    this.spawnPoints = [
+      new THREE.Vector3(-52, 0, 40), new THREE.Vector3(52, 0, 40),
+      new THREE.Vector3(-52, 0, -6), new THREE.Vector3(52, 0, -6),
+      new THREE.Vector3(-40, 0, 52), new THREE.Vector3(40, 0, 52)
+    ];
+    this.extractPoints = [
+      new THREE.Vector3(0, 0, 84),    // 南侧码头（直升机）
+      new THREE.Vector3(-52, 0, 52),  // 西北角绳梯点
+      new THREE.Vector3(52, 0, 52)    // 东北角绳梯点
+    ];
     this.water = null;
     this.lampLights = [];
     this._build();

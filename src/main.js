@@ -203,10 +203,15 @@ function startGame(touchMode) {
   player.hp = 100; player.armor = 60;
   player.alive = true;
   player.loot = []; player.kills = 0;
-  player.pos.copy(world.spawnPoint);
+  // 每局随机出生点（面向地图中心）与随机撤离点
+  const sp = world.spawnPoints[Math.floor(Math.random() * world.spawnPoints.length)];
+  player.pos.copy(sp);
   player.velY = 0;
-  controls.yaw = Math.PI; // 面向地图中心
+  controls.yaw = Math.atan2(-sp.x, sp.z);
   controls.pitch = 0;
+  const ep = world.extractPoints[Math.floor(Math.random() * world.extractPoints.length)];
+  world.extractPoint.copy(ep);
+  lootMgr.setExtractPoint(ep);
   weapon.mag = weapon.magSize; weapon.reserve = 120;
   weapon.recoil = 0;
   extractProgress = 0;
