@@ -6,32 +6,36 @@ import { concreteTexture, groundTexture, containerTexture, metalTexture, woodTex
 // 坐标：1 单位 = 1 米，地图核心区约 130 x 130
 // ============================================================
 
+// ============================================================
+// 地图注册表与通用工具（碰撞/射线）
+// 坐标：1 单位 = 1 米
+// ============================================================
+
 export const MAP_HALF = 78;
 
+// 地图注册表：名称与描述（开局地图选择界面用）
+export const MAPS = {
+  prison: { id: 'prison', name: '潮汐监狱', desc: '夜战 · 监区牢房 / 放风场 / 码头' },
+  dam:    { id: 'dam',    name: '零号大坝', desc: '黄昏 · 坝顶机房 / 泄洪道 / 行政辖区 / 村庄' }
+};
+
 export class World {
-  constructor(scene) {
+  constructor(scene, mapId = 'prison') {
     this.scene = scene;
+    this.mapId = MAPS[mapId] ? mapId : 'prison';
     this.colliders = [];        // { min:{x,y,z}, max:{x,y,z} }
     this.solidMeshes = [];
     this.minimapRects = [];     // { x, z, w, d } 俯视图
     this.patrolPoints = [];
+    this.spawnPoints = [];
+    this.extractPoints = [];
     this.spawnPoint = new THREE.Vector3(-52, 0, 40);
     this.extractPoint = new THREE.Vector3(0, 0, 84);
     this.extractRadius = 7;
-    // 每局随机的出生点 / 撤离点候选
-    this.spawnPoints = [
-      new THREE.Vector3(-52, 0, 40), new THREE.Vector3(52, 0, 40),
-      new THREE.Vector3(-52, 0, -6), new THREE.Vector3(52, 0, -6),
-      new THREE.Vector3(-40, 0, 52), new THREE.Vector3(40, 0, 52)
-    ];
-    this.extractPoints = [
-      new THREE.Vector3(0, 0, 84),    // 南侧码头（直升机）
-      new THREE.Vector3(-52, 0, 52),  // 西北角绳梯点
-      new THREE.Vector3(52, 0, 52)    // 东北角绳梯点
-    ];
-    this.water = null;
+    this.waters = [];
     this.lampLights = [];
-    this._build();
+    if (this.mapId === 'dam') this._buildZeroDam();
+    else this._buildTidePrison();
   }
 
   addCollider(cx, cy, cz, sx, sy, sz) {
@@ -63,7 +67,10 @@ export class World {
     return m;
   }
 
-  _build() {
+  // ============================================================
+  // 地图一：潮汐监狱（夜战）
+  // ============================================================
+  _buildTidePrison() {
     const S = this.scene;
 
     // ---------- 材质（程序化照片风纹理） ----------
@@ -129,43 +136,8 @@ export class World {
     S.add(pier);
     this.addCollider(0, -0.5, MAP_HALF + 16, 10, 1, 34);
 
-    // ---------- 环形海水 ----------
-    const waterGeo = new THREE.PlaneGeometry(600, 600, 64, 64);
-    const waterMat = new THREE.ShaderMaterial({
-      transparent: true,
-      uniforms: {
-        uTime: { value: 0 },
-        uDeep: { value: new THREE.Color(0x07222e) },
-        uShallow: { value: new THREE.Color(0x14506a) }
-      },
-      vertexShader: `
-        uniform float uTime;
-        varying vec2 vUv; varying float vWave;
-        void main() {
-          vUv = uv;
-          vec3 p = position;
-          float w = sin(p.x * 0.12 + uTime * 1.2) * 0.35 + sin(p.y * 0.09 - uTime * 0.8) * 0.3
-                  + sin((p.x + p.y) * 0.05 + uTime * 0.5) * 0.25;
-          p.z += w;
-          vWave = w;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
-        }`,
-      fragmentShader: `
-        uniform vec3 uDeep; uniform vec3 uShallow;
-        varying vec2 vUv; varying float vWave;
-        void main() {
-          float t = smoothstep(-0.6, 0.7, vWave);
-          vec3 col = mix(uDeep, uShallow, t);
-          float spec = pow(max(vWave, 0.0), 6.0) * 0.6;
-          col += spec;
-          gl_FragColor = vec4(col, 0.92);
-        }`
-    });
-    const water = new THREE.Mesh(waterGeo, waterMat);
-    water.rotation.x = -Math.PI / 2;
-    water.position.y = -0.7;
-    S.add(water);
-    this.water = water;
+    // ---------- 水面（通用方法，监狱环绕海水 / 大坝上游水库） ----------
+    this._addWater(0, 0, 600, 600, -0.7);
 
     // ---------- 外围墙（南侧开门通码头） ----------
     const H = 8;
@@ -305,21 +277,284 @@ export class World {
       new THREE.Vector3(-24, 0, 14), new THREE.Vector3(0, 0, 20),
       new THREE.Vector3(24, 0, 6), new THREE.Vector3(40, 0, 24),
       new THREE.Vector3(-40, 0, 40), new THREE.Vector3(-6, 0, 44),
-      new THREE.Vector3(14, 0, 36), new THREE.Vector3(46, 0, 40),
+      new THREE.Vector3(14, 0, 36), new THREE.Vector3(44, 0, 28),
       new THREE.Vector3(0, 0, 60), new THREE.Vector3(-50, 0, 8),
-      new THREE.Vector3(50, 0, -12), new THREE.Vector3(-30, 0, 56)
+      new THREE.Vector3(40, 0, -18), new THREE.Vector3(-26, 0, 48)
+    ];
+
+    // ---------- 出生点 / 撤离点候选（每局随机） ----------
+    this.spawnPoints = [
+      new THREE.Vector3(-52, 0, 40), new THREE.Vector3(52, 0, 40),
+      new THREE.Vector3(-52, 0, -6), new THREE.Vector3(52, 0, -6),
+      new THREE.Vector3(-40, 0, 52), new THREE.Vector3(40, 0, 52)
+    ];
+    this.extractPoints = [
+      new THREE.Vector3(0, 0, 84),    // 南侧码头（直升机）
+      new THREE.Vector3(-52, 0, 52),  // 西北角绳梯点
+      new THREE.Vector3(52, 0, 52)    // 东北角绳梯点
     ];
   }
 
   // 伪环境光遮蔽接触阴影（贴在物件脚下的径向暗斑）
-  addContactShadow(x, z, w, d, opacity = 0.4) {
+  addContactShadow(x, z, w, d, opacity = 0.4, y = 0.02) {
     const m = new THREE.Mesh(
       new THREE.PlaneGeometry(w, d),
       new THREE.MeshBasicMaterial({ map: this.shadowTex, transparent: true, opacity, depthWrite: false })
     );
     m.rotation.x = -Math.PI / 2;
-    m.position.set(x, 0.02, z);
+    m.position.set(x, y, z);
     this.scene.add(m);
+  }
+
+  // ============================================================
+  // 地图二：零号大坝（黄昏，沙漠峡谷中的水坝工事群）
+  // 参考《三角洲行动》烽火地带零号大坝：坝顶机房、泄洪道、
+  // 行政辖区、村庄、电站、集装箱区、直升机坪
+  // ============================================================
+  _buildZeroDam() {
+    const S = this.scene;
+
+    // ---------- 材质（暖沙色调） ----------
+    const sand = new THREE.MeshStandardMaterial({ map: groundTexture(512, 24, '#8a744f'), roughness: 0.96 });
+    const cliff = new THREE.MeshStandardMaterial({ map: concreteTexture(512, 6, '#6e5c40'), roughness: 0.95 });
+    const damCon = new THREE.MeshStandardMaterial({ map: concreteTexture(512, 4, '#9a948a'), roughness: 0.9 });
+    const adobe = new THREE.MeshStandardMaterial({ map: plasterTexture(512, 3, '#a8926c'), roughness: 0.9 });
+    const steel = new THREE.MeshStandardMaterial({ map: metalTexture(256, 2, '#48545e'), roughness: 0.5, metalness: 0.75 });
+    const wood = new THREE.MeshStandardMaterial({ map: woodTexture(512, 2, '#6b5638'), roughness: 0.9 });
+    const rust = new THREE.MeshStandardMaterial({ map: containerTexture('#6e4a33'), roughness: 0.85, metalness: 0.35 });
+    const blue = new THREE.MeshStandardMaterial({ map: containerTexture('#33566b'), roughness: 0.8, metalness: 0.2 });
+    const red = new THREE.MeshStandardMaterial({ map: containerTexture('#7a3b30'), roughness: 0.8, metalness: 0.2 });
+    const green = new THREE.MeshStandardMaterial({ map: containerTexture('#4c6244'), roughness: 0.8, metalness: 0.2 });
+    this.mats = { concrete: damCon, concreteDark: sand, wallPaint: adobe, rust, steel, wood, red, blue, green };
+    this.shadowTex = contactShadowTexture();
+
+    // ---------- 黄昏光照 ----------
+    S.background = new THREE.Color(0x40311f);
+    S.fog = new THREE.Fog(0x40311f, 55, 190);
+    S.environmentIntensity = 0.32;
+    S.add(new THREE.HemisphereLight(0xa08a64, 0x30261a, 1.0));
+    const sun = new THREE.DirectionalLight(0xffc98a, 2.2);
+    sun.position.set(-50, 60, 35);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -95; sun.shadow.camera.right = 95;
+    sun.shadow.camera.top = 95; sun.shadow.camera.bottom = -95;
+    sun.shadow.camera.far = 260;
+    sun.shadow.bias = -0.0006;
+    S.add(sun);
+
+    // ---------- 地面（沙漠台地）与峡谷岩壁 ----------
+    const ground = new THREE.Mesh(new THREE.BoxGeometry(MAP_HALF * 2, 3, MAP_HALF * 2), sand);
+    ground.position.y = -1.5;
+    ground.receiveShadow = true;
+    S.add(ground);
+    this.addCollider(0, -1.5, 0, MAP_HALF * 2, 3, MAP_HALF * 2);
+    // 岩壁（围合边界，比监狱围墙更有野外感）
+    this.box(MAP_HALF * 2, 14, 3, cliff, 0, 0, -MAP_HALF);
+    this.box(MAP_HALF * 2, 14, 3, cliff, 0, 0, MAP_HALF);
+    this.box(3, 14, MAP_HALF * 2, cliff, -MAP_HALF, 0, 0);
+    this.box(3, 14, MAP_HALF * 2, cliff, MAP_HALF, 0, 0);
+
+    // ---------- 大坝主体（北侧，横贯东西） ----------
+    // 坝体分两段，中间是泄洪道闸房
+    this.box(62, 12, 10, damCon, -39, 0, -50);   // 西段 x -70..-8
+    this.box(62, 12, 10, damCon, 39, 0, -50);    // 东段 x 8..70
+    // 坝顶路面（可行走）
+    this.box(62, 0.6, 10, damCon, -39, 12, -50, { noMinimap: true });
+    this.box(62, 0.6, 10, damCon, 39, 12, -50, { noMinimap: true });
+    // 坝顶机房 ×4（可进入的高价值区，门朝南）
+    for (const mx of [-55, -25, 25, 55]) {
+      this.box(12, 4.2, 0.4, adobe, mx, 12.6, -53.6);          // 背墙
+      this.box(0.4, 4.2, 8, adobe, mx - 5.8, 12.6, -50);       // 西墙
+      this.box(0.4, 4.2, 8, adobe, mx + 5.8, 12.6, -50);       // 东墙
+      this.box(4.6, 4.2, 0.4, adobe, mx - 3.7, 12.6, -46.4);   // 前脸左
+      this.box(4.6, 4.2, 0.4, adobe, mx + 3.7, 12.6, -46.4);   // 前脸右
+      this.box(2.8, 1.6, 0.4, adobe, mx, 15.2, -46.4, { noMinimap: true }); // 门楣
+      this.box(12.6, 0.4, 8.6, damCon, mx, 16.8, -50, { solid: false });    // 顶
+      this._lamp(mx, 12.4, -48.5, 0xffe6c0, 24, 14);
+    }
+    // 上下坝阶梯：沿坝体南立面东西向爬升（0.525m 一级），顶端可北行上坝顶
+    for (let i = 0; i < 24; i++) {
+      this.box(1.2, (i + 1) * 0.525, 5, damCon, 69.4 - i * 1.2, 0, -42, { noMinimap: true });
+      this.box(1.2, (i + 1) * 0.525, 5, damCon, -69.4 + i * 1.2, 0, -42, { noMinimap: true });
+    }
+    // 泄洪道闸房（大坝中央通道）
+    this.box(2, 10, 10, damCon, -7, 0, -50);
+    this.box(2, 10, 10, damCon, 7, 0, -50);
+    this.box(16, 1, 10, damCon, 0, 9, -50); // 顶板
+    this.box(14, 9, 0.4, steel, 0, 0, -54.6, { noMinimap: true }); // 北端拦污栅（挡住水库侧）
+    this._lamp(0, 6, -49, 0xffc060, 30, 14); // 通道内警示灯
+    // 上游水库水面（坝后）
+    this._addWater(0, -88, 240, 60, 9.8);
+
+    // ---------- 行政辖区（中东部主楼，室内高价值区） ----------
+    const ax = 35, az = -7; // 中心
+    this.box(26, 5, 0.6, adobe, ax, 0, az - 9);            // 北墙
+    this.box(26, 5, 0.6, adobe, ax, 0, az + 9);            // 南墙
+    this.box(0.6, 5, 18.6, adobe, ax - 13, 0, az);         // 西墙
+    this.box(0.6, 5, 7, adobe, ax + 13, 0, az - 5.8);      // 东墙（留南段门洞）
+    this.box(0.6, 5, 6, adobe, ax + 13, 0, az + 6.3);
+    this.box(0.6, 2, 5.6, adobe, ax + 13, 3, az + 0.2, { noMinimap: true }); // 东门楣
+    // 南门（主入口）
+    this.box(9.5, 5, 0.6, adobe, ax - 8.2, 0, az + 9);
+    this.box(9.5, 5, 0.6, adobe, ax + 8.2, 0, az + 9);
+    this.box(5, 1.6, 0.6, adobe, ax, 3.4, az + 9, { noMinimap: true });
+    // 内部隔断（两个房间）
+    this.box(0.5, 5, 10, adobe, ax - 5, 0, az - 4);
+    this.box(8, 5, 0.5, adobe, ax + 8, 0, az - 2);
+    // 局部顶
+    this.box(26, 0.4, 8, damCon, ax, 5, az - 5, { solid: false });
+    this.box(26, 0.4, 8, damCon, ax, 5, az + 5, { solid: false });
+    this._lamp(ax, 4.6, az, 0xd8e8ff, 28, 18);
+    this._lamp(ax + 8, 4.6, az - 6, 0xd8e8ff, 22, 14);
+
+    // ---------- 村庄（西侧，土坯房群 + 水塔） ----------
+    for (const [hx, hz] of [[-52, -6], [-36, 6], [-52, 20], [-38, 34], [-24, -4]]) {
+      this._house(hx, hz, adobe, damCon);
+    }
+    // 水塔
+    for (const [lx, lz] of [[-20, 16], [-18, 20], [-24, 20], [-22, 24]]) {
+      this.box(0.5, 6, 0.5, steel, lx, 0, lz, { noMinimap: true });
+    }
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 3, 14), steel);
+    tank.position.set(-21, 7.5, 20);
+    tank.castShadow = true;
+    S.add(tank);
+    this.addCollider(-21, 7.5, 20, 4.4, 3, 4.4);
+
+    // ---------- 电站（东北，坝底东侧） ----------
+    this.box(14, 5, 9, adobe, 46, 0, -30);
+    this.box(3.4, 5, 0.5, adobe, 42.2, 0, -25.5);   // 门两侧
+    this.box(3.4, 5, 0.5, adobe, 49.8, 0, -25.5);
+    this.box(3, 1.4, 0.5, adobe, 46, 3.6, -25.5, { noMinimap: true });
+    this.box(14, 0.4, 9, damCon, 46, 5, -30, { solid: false });
+    for (const [tx, tz] of [[40, -20], [43, -18.4], [40.4, -17]]) {
+      const t = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.6, 1.5), steel);
+      t.position.set(tx, 0.8, tz);
+      t.castShadow = true;
+      S.add(t);
+      this.addCollider(tx, 0.8, tz, 1.5, 1.6, 1.5);
+    }
+    this._lamp(44, 5.4, -22, 0xffe6c0, 26, 16);
+
+    // ---------- 集装箱装卸区（中南） ----------
+    const cont = (x, z, ry, mat, stacked) => {
+      this.box(6.1, 2.6, 2.5, mat, x, 0, z, { ry });
+      this.addContactShadow(x, z, 7.6, 3.8, 0.45);
+      if (stacked) this.box(6.1, 2.6, 2.5, red, x, 2.6, z, { ry });
+    };
+    cont(18, 28, 0.1, blue, true);
+    cont(30, 20, -0.25, green, false);
+    cont(42, 34, 1.6, red, false);
+    cont(6, 40, 0.05, rust, true);
+    cont(-8, 34, 1.55, blue, false);
+
+    // ---------- 南检查站（公路撤离点旁） ----------
+    this.box(3, 2.6, 3, adobe, -6, 0, 58);
+    this.box(0.4, 1, 6, steel, 2, 0, 56, { noMinimap: true });
+    this.box(0.4, 1, 6, steel, 8, 0, 56, { noMinimap: true });
+    this._lamp(0, 4, 58, 0xffe6c0, 28, 18);
+
+    // ---------- 直升机坪（西北撤离点） ----------
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 0.24, 28), damCon);
+    pad.position.set(-46, 0.12, -16);
+    pad.receiveShadow = true;
+    S.add(pad);
+    const hRing = new THREE.Mesh(new THREE.TorusGeometry(4, 0.25, 8, 32),
+      new THREE.MeshStandardMaterial({ color: 0xd8d2c0, roughness: 0.8 }));
+    hRing.rotation.x = -Math.PI / 2;
+    hRing.position.set(-46, 0.28, -16);
+    S.add(hRing);
+
+    // ---------- 场景填充：岩石 / 废车 / 掩体 ----------
+    for (const [rx, rz, s] of [[10, 8, 2.2], [-14, 44, 1.8], [24, 46, 2.6], [-30, -18, 2], [16, -18, 1.6], [-6, 26, 1.5], [36, 8, 2.4]]) {
+      this.box(s, s * 0.8, s, cliff, rx, 0, rz, { ry: Math.random() * 1.5, noMinimap: true });
+    }
+    this.box(5.5, 2.2, 2.4, rust, 14, 0, 14, { ry: 0.5 });
+    this.box(2.2, 1.6, 2.2, steel, 17.4, 0, 15.6, { ry: 0.5 });
+    this.addContactShadow(15, 14.5, 8.5, 4.5, 0.45);
+    this.box(4, 1.4, 1, damCon, -4, 0, -20, { noMinimap: true });
+    this.box(4, 1.4, 1, damCon, 22, 0, -24, { noMinimap: true });
+    // 场地灯柱
+    for (const [x, z] of [[-30, 40], [20, 44], [48, 10], [-12, -34], [36, -38]]) {
+      this.box(0.35, 7, 0.35, steel, x, 0, z, { noMinimap: true });
+      this._lamp(x, 7.4, z, 0xffe0b0, 30, 22);
+    }
+
+    // ---------- 巡逻 / 出生 / 撤离 ----------
+    this.patrolPoints = [
+      new THREE.Vector3(-20, 0, -30), new THREE.Vector3(10, 0, -36),
+      new THREE.Vector3(34, 0, -38), new THREE.Vector3(46, 0, -12),
+      new THREE.Vector3(28, 0, 4), new THREE.Vector3(44, 0, 20),
+      new THREE.Vector3(24, 0, 34), new THREE.Vector3(0, 0, 44),
+      new THREE.Vector3(-16, 0, 28), new THREE.Vector3(-30, 0, 12),
+      new THREE.Vector3(-46, 0, -24), new THREE.Vector3(-40, 0, -28),
+      new THREE.Vector3(0, 0, -48), new THREE.Vector3(-26, 0, 46),
+      new THREE.Vector3(50, 0, 44), new THREE.Vector3(-56, 0, -38)
+    ];
+    this.spawnPoints = [
+      new THREE.Vector3(52, 0, 28), new THREE.Vector3(30, 0, 58),
+      new THREE.Vector3(-24, 0, 58), new THREE.Vector3(-52, 0, 24),
+      new THREE.Vector3(56, 0, -6), new THREE.Vector3(-68, 0, -34)
+    ];
+    this.extractPoints = [
+      new THREE.Vector3(0, 0, 62),     // 南检查站公路
+      new THREE.Vector3(-52, 0, 44),   // 村庄果园
+      new THREE.Vector3(-46, 0, -16)   // 直升机坪
+    ];
+  }
+
+  // 土坯房：8×6，门朝南，平顶
+  _house(x, z, wallM, roofM) {
+    this.box(8, 3.2, 0.4, wallM, x, 0, z + 3);              // 后墙
+    this.box(0.4, 3.2, 6, wallM, x - 4, 0, z);              // 西墙
+    this.box(0.4, 3.2, 6, wallM, x + 4, 0, z);              // 东墙
+    this.box(2.8, 3.2, 0.4, wallM, x - 2.6, 0, z - 3);      // 前墙左
+    this.box(2.8, 3.2, 0.4, wallM, x + 2.6, 0, z - 3);      // 前墙右
+    this.box(2.4, 0.9, 0.4, wallM, x, 2.3, z - 3, { noMinimap: true }); // 门楣
+    this.box(8.6, 0.4, 6.6, roofM, x, 3.2, z, { solid: false });        // 平顶
+    this.addContactShadow(x, z, 11, 9, 0.45);
+  }
+
+  _addWater(cx, cz, w, d, y) {
+    const S = this.scene;
+    const waterGeo = new THREE.PlaneGeometry(w, d, 64, 64);
+    const waterMat = new THREE.ShaderMaterial({
+      transparent: true,
+      uniforms: {
+        uTime: { value: 0 },
+        uDeep: { value: new THREE.Color(0x07222e) },
+        uShallow: { value: new THREE.Color(0x14506a) }
+      },
+      vertexShader: `
+        uniform float uTime;
+        varying vec2 vUv; varying float vWave;
+        void main() {
+          vUv = uv;
+          vec3 p = position;
+          float w = sin(p.x * 0.12 + uTime * 1.2) * 0.35 + sin(p.y * 0.09 - uTime * 0.8) * 0.3
+                  + sin((p.x + p.y) * 0.05 + uTime * 0.5) * 0.25;
+          p.z += w;
+          vWave = w;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        }`,
+      fragmentShader: `
+        uniform vec3 uDeep; uniform vec3 uShallow;
+        varying vec2 vUv; varying float vWave;
+        void main() {
+          float t = smoothstep(-0.6, 0.7, vWave);
+          vec3 col = mix(uDeep, uShallow, t);
+          float spec = pow(max(vWave, 0.0), 6.0) * 0.6;
+          col += spec;
+          gl_FragColor = vec4(col, 0.92);
+        }`
+    });
+    const water = new THREE.Mesh(waterGeo, waterMat);
+    water.rotation.x = -Math.PI / 2;
+    water.position.set(cx, y, cz);
+    S.add(water);
+    this.waters.push({ mesh: water, y });
+    return water;
   }
 
   // 一段铁栅栏：细杆阵列 + 碰撞（两端留门柱）
@@ -367,10 +602,10 @@ export class World {
   }
 
   update(t) {
-    if (this.water) {
-      this.water.material.uniforms.uTime.value = t;
-      // 潮汐缓慢上涨（视觉）
-      this.water.position.y = -0.7 + Math.sin(t * 0.02) * 0.25;
+    for (const w of this.waters) {
+      w.mesh.material.uniforms.uTime.value = t;
+      // 潮汐/水位缓慢波动（视觉）
+      w.mesh.position.y = w.y + Math.sin(t * 0.02) * 0.25;
     }
   }
 }

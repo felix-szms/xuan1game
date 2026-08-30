@@ -3,7 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { World, moveWithCollisions, groundHeight, raycastWorld, hasLineOfSight } from './world.js';
+import { World, MAPS, moveWithCollisions, groundHeight, raycastWorld, hasLineOfSight } from './world.js';
 import { Controls } from './controls.js';
 import { Weapon } from './weapons.js';
 import { EnemyManager } from './enemies.js';
@@ -46,18 +46,39 @@ window.addEventListener('resize', () => {
 });
 
 // ================= 游戏对象 =================
-const world = new World(scene);
+let world = null;
+let lootMgr = null;
+let enemyMgr = null;
+let currentMapId = null;
 const hud = new HUD();
 const controls = new Controls(renderer.domElement, document.getElementById('touchui'));
 const weapon = new Weapon(camera, scene);
 scene.add(camera);
-const enemyMgr = new EnemyManager(scene, world);
-const lootMgr = new LootManager(scene, world);
-world.lootCrates = lootMgr.crates;
+
+// 按地图构建世界（切换地图或首次进入时调用）
+function buildMap(mapId) {
+  // 清空场景（保留相机及其子物体：枪模/补光），并释放几何体内存
+  for (let i = scene.children.length - 1; i >= 0; i--) {
+    const obj = scene.children[i];
+    if (obj === camera) continue;
+    scene.remove(obj);
+    obj.traverse?.((o) => {
+      o.geometry?.dispose?.();
+      if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose?.());
+    });
+  }
+  world = new World(scene, mapId);
+  lootMgr = new LootManager(scene, world);
+  enemyMgr = new EnemyManager(scene, world);
+  world.lootCrates = lootMgr.crates;
+  weapon.resetScene(scene); // 曳光弹池重新挂到新场景
+  currentMapId = mapId;
+  Object.assign(window.__game, { world, lootMgr, enemyMgr });
+}
 
 // 玩家状态
 const player = {
-  pos: world.spawnPoint.clone(),
+  pos: new THREE.Vector3(-52, 0, 40), // 每局开始时由随机出生点覆盖
   velY: 0,
   yaw: 0, pitch: 0,
   eyeHeight: 1.62,
@@ -191,13 +212,15 @@ function damagePlayer(dmg) {
 const menuEl = document.getElementById('menu');
 const endEl = document.getElementById('end-screen');
 const briefPanel = document.getElementById('brief-panel');
+let chosenMode = 'pc';
 
-function startGame(touchMode) {
+function startGame(touchMode, mapId = 'prison') {
   initAudio();
   controls.enableTouch(touchMode);
   hud.el.hud.classList.toggle('touch', touchMode);
   menuEl.style.display = 'none';
   endEl.style.display = 'none';
+  document.getElementById('map-menu').style.display = 'none';
   hud.show();
   gameState = 'playing';
   player.hp = 100; player.armor = 60;
@@ -220,12 +243,22 @@ function startGame(touchMode) {
   lootMgr.reset(); // 每局重新随机布置所有物资箱与加密保险箱（全部关闭）
   hud.setLoot([]);
   hud.extractBanner(false);
-  hud.toast(touchMode ? '行动开始 — 左侧摇杆移动，右侧滑动转视角' : '行动开始 — 点击画面锁定鼠标视角', 3200);
+  hud.toast(`行动开始 — 目标地图：${MAPS[mapId].name}`, 2600);
 
   // 重置敌人
   for (const e of enemyMgr.enemies) scene.remove(e.mesh);
   enemyMgr.enemies = [];
   enemyMgr.spawnAll(10);
+}
+
+// 站位探测：某点在给定脚部高度下是否可站（供台阶攀登判定）
+function pointFree(x, z, feetY, colliders, r = 0.3) {
+  const head = feetY + 1.2;
+  for (const c of colliders) {
+    if (head < c.min.y || feetY > c.max.y - 0.02) continue;
+    if (x + r > c.min.x && x - r < c.max.x && z + r > c.min.z && z - r < c.max.z) return false;
+  }
+  return true;
 }
 
 // ================= 加密保险箱密码破解 =================
@@ -316,20 +349,36 @@ function endGame(win) {
   endEl.style.display = 'flex';
 }
 
-document.getElementById('btn-pc').addEventListener('click', () => startGame(false));
-document.getElementById('btn-pad').addEventListener('click', () => startGame(true));
+document.getElementById('btn-pc').addEventListener('click', () => {
+  chosenMode = 'pc';
+  menuEl.style.display = 'none';
+  document.getElementById('map-menu').style.display = 'flex';
+});
+document.getElementById('btn-pad').addEventListener('click', () => {
+  chosenMode = 'pad';
+  menuEl.style.display = 'none';
+  document.getElementById('map-menu').style.display = 'flex';
+});
+document.getElementById('btn-back').addEventListener('click', () => {
+  document.getElementById('map-menu').style.display = 'none';
+  menuEl.style.display = 'flex';
+});
+for (const id of ['map-prison', 'map-dam']) {
+  document.getElementById(id).addEventListener('click', () => {
+    const mapId = id === 'map-dam' ? 'dam' : 'prison';
+    if (currentMapId !== mapId) buildMap(mapId);
+    startGame(chosenMode === 'pad', mapId);
+  });
+}
 document.getElementById('btn-restart').addEventListener('click', () => {
   endEl.style.display = 'none';
-  menuEl.style.display = 'flex';
+  document.getElementById('map-menu').style.display = 'flex';
   gameState = 'menu';
 });
 
 // ================= 主循环 =================
 let lastStepTime = 0;
-function tick() {
-  requestAnimationFrame(tick);
-  const dt = Math.min(0.05, clock.getDelta());
-  const t = clock.elapsedTime;
+function updateFrame(dt, t) {
   world.update(t);
   lootMgr.update(t);
   weapon.update(dt);
@@ -393,6 +442,20 @@ function tick() {
 
     const res = moveWithCollisions(player.pos, { x: vx * dt, z: vz * dt }, world.colliders, 0.38, player.crouching ? 1.2 : 1.7);
     player.pos.x = res.x; player.pos.z = res.z;
+    // 台阶自动踏上：低处被挡、抬高 0.55m 后通畅，且前方地面高差 ≤0.55 则登上
+    if (res.hit && !player.airborne && !player.crouching) {
+      const len = Math.hypot(vx, vz) || 1;
+      const aheadX = player.pos.x + (vx / len) * 0.55;
+      const aheadZ = player.pos.z + (vz / len) * 0.55;
+      const lowBlocked = !pointFree(aheadX, aheadZ, player.pos.y, world.colliders);
+      const highFree = pointFree(aheadX, aheadZ, player.pos.y + 0.55, world.colliders);
+      if (lowBlocked && highFree) {
+        const gh = groundHeight(aheadX, aheadZ, player.pos.y, world.colliders);
+        if (gh > player.pos.y && gh <= player.pos.y + 0.56 && pointFree(aheadX, aheadZ, gh, world.colliders)) {
+          player.pos.x = aheadX; player.pos.z = aheadZ; player.pos.y = gh;
+        }
+      }
+    }
 
     // 脚步声
     if (player.moving && !player.airborne && t - lastStepTime > (inp.sprint ? 0.3 : 0.45)) {
@@ -422,7 +485,7 @@ function tick() {
     if (crate) {
       hud.interactTip((controls.touchMode ? '点击【互动】' : '按 <b>E</b>') + ` 搜刮物资箱`);
       if (inp.use) {
-        const msgs = lootMgr.open(crate, player);
+        const msgs = lootMgr.open(crate, player, weapon);
         hud.toast('获得：' + msgs.join('、'));
         hud.setLoot(player.loot);
       }
@@ -455,10 +518,17 @@ function tick() {
   composer.render();
 }
 
+// 可见时由 rAF 驱动；隐藏/自动化测试时可通过 updateFrame 手动驱动
+function tick() {
+  requestAnimationFrame(tick);
+  updateFrame(Math.min(0.05, clock.getDelta()), clock.elapsedTime);
+}
+
 const clock = new THREE.Clock();
 
 // 调试 / 自动化测试句柄
-window.__game = { player, controls, weapon, enemyMgr, lootMgr, world, scene, camera, startGame, endGame, gameState: () => gameState, crack, tryLock, cancelCrack };
+window.__game = { player, controls, weapon, enemyMgr, lootMgr, world, scene, camera, startGame, endGame, gameState: () => gameState, crack, tryLock, cancelCrack, buildMap, updateFrame };
+buildMap('prison'); // 启动即构建监狱地图（作为菜单背景与默认地图）
 
 // 隐藏 loading
 document.getElementById('loading').style.display = 'none';

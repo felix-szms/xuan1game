@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<title>潮汐监狱 · TIDE PRISON OPS</title>
+<title>X行动 · OPERATION X</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #05080c; }
@@ -70,6 +70,23 @@
 
   .toast-center { position: absolute; left: 50%; top: 44%; transform: translate(-50%,-50%);
                   font-size: 16px; color: #ffd76a; text-shadow: 0 1px 4px #000; opacity: 0; transition: opacity .4s; }
+
+  /* ---------- 地图选择界面 ---------- */
+  #map-menu { position: fixed; inset: 0; z-index: 32; display: none; flex-direction: column;
+              align-items: center; justify-content: center;
+              background: linear-gradient(180deg, rgba(4,8,14,.94), rgba(8,16,26,.97)); }
+  #map-menu .map-title { font-size: 30px; letter-spacing: 8px; color: #eaf6ff; }
+  #map-menu .sub { margin: 8px 0 30px; font-size: 13px; letter-spacing: 3px; color: #7d9db2; }
+  .map-row { display: flex; gap: 22px; }
+  .map-card { pointer-events: auto; cursor: pointer; width: 250px; padding: 24px 22px; text-align: left;
+              background: rgba(12,22,32,.85); border: 1px solid rgba(120,180,220,.3); border-radius: 8px;
+              transition: all .2s; position: relative; }
+  .map-card:hover { border-color: #8fd0ff; background: rgba(24,44,62,.9); transform: translateY(-4px); }
+  .map-card .mc-name { font-size: 20px; font-weight: 700; color: #eaf6ff; letter-spacing: 3px; }
+  .map-card .mc-desc { margin-top: 8px; font-size: 12px; color: #9db8c9; line-height: 1.7; }
+  .map-card .mc-tag { display: inline-block; margin-top: 14px; font-size: 11px; letter-spacing: 2px;
+              color: #8fd0ff; border: 1px solid rgba(143,208,255,.45); padding: 2px 10px; border-radius: 2px; }
+  .map-card .mc-tag.new { color: #ff9a50; border-color: rgba(255,154,80,.5); }
 
   /* ---------- 密码破解界面 ---------- */
   #crack-ui { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%); z-index: 25;
@@ -193,8 +210,8 @@
   </div>
 
   <div id="menu">
-    <h1>潮汐<em>监狱</em></h1>
-    <div class="sub">TIDE PRISON OPS — 战术撤离行动</div>
+    <h1>X<em>行动</em></h1>
+    <div class="sub">OPERATION X — 战术撤离行动</div>
     <div class="panel" id="brief-panel">
       <h3>行动简报</h3>
       <p>你孤身渗透进被潮水包围的废弃监狱。搜索各处物资箱收集有价值的装备，破解加密保险箱获取高价值物资，
@@ -224,6 +241,24 @@
     </div>
   </div>
 
+  <div id="map-menu">
+    <h1 class="map-title">选择地图</h1>
+    <div class="sub">选择要执行行动的战区</div>
+    <div class="map-row">
+      <div class="map-card" id="map-prison">
+        <div class="mc-name">潮汐监狱</div>
+        <div class="mc-desc">夜战 · 监区牢房 / 放风场 / 码头</div>
+        <div class="mc-tag">经典地图</div>
+      </div>
+      <div class="map-card" id="map-dam">
+        <div class="mc-name">零号大坝</div>
+        <div class="mc-desc">黄昏 · 坝顶机房 / 泄洪道 / 行政辖区 / 村庄</div>
+        <div class="mc-tag new">新地图</div>
+      </div>
+    </div>
+    <div class="mode-btn" id="btn-back" style="margin-top:26px">返回</div>
+  </div>
+
   <div id="end-screen">
     <div class="result win" id="end-result">撤离成功</div>
     <div class="stats" id="end-stats"></div>
@@ -232,8 +267,18 @@
     </div>
   </div>
 
-  <div id="loading">正在部署至潮汐监狱 …</div>
+  <div id="loading">正在部署作战区域 …</div>
 
+  <script>
+    // 启动崩溃可视化：模块加载失败时把错误显示在加载层
+    window.addEventListener('error', (e) => {
+      const l = document.getElementById('loading');
+      if (l && e.filename && e.filename.includes('main')) {
+        l.style.display = 'flex';
+        l.textContent = '启动错误: ' + e.message;
+      }
+    });
+  </script>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

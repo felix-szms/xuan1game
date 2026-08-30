@@ -22,6 +22,43 @@ const SAFE_TABLE = [
   { name: '金鹰雕像', value: 12000 }
 ];
 
+// 每张地图的物资候选点：[x, z] 或 [x, z, y]（y 用于坝顶等高位）
+const MAP_LOOT = {
+  prison: {
+    spawns: [
+      [-48, -54], [-26, -50], [-12, -42], [-40, -40], [-24, -28],
+      [24, -54], [40, -46], [46, -32], [30, -34],
+      [-34, 22], [-18, 36], [10, 28], [30, 14], [44, 32],
+      [-40, 44], [-6, 50], [20, 50], [54, 6], [-54, 30], [8, 8],
+      [-48.5, -52], [-41.5, -52], [-34.5, -52], [-27.5, -52], [-20.5, -52], [-13.5, -52],
+      [-48.5, -29], [-41.5, -29], [-34.5, -29], [-27.5, -29], [-20.5, -29], [-13.5, -29],
+      [-44, -41], [-36, -41], [-20, -41], [-8, -41],
+      [24, -52], [38, -52], [30, -32], [44, -50]
+    ],
+    safeSpawns: [[-48, -41], [-30, -41], [-12, -41], [28, -44], [44, -36], [-36, 33]]
+  },
+  dam: {
+    spawns: [
+      // 坝顶机房（高位，三倍权重保证每局都有坝顶物资）
+      [-55, -50, 12.6], [-25, -50, 12.6], [25, -50, 12.6], [55, -50, 12.6],
+      [-55, -50, 12.6], [-25, -50, 12.6], [25, -50, 12.6], [55, -50, 12.6],
+      [-45, -50, 12.6], [45, -50, 12.6], [-35, -52, 12.6], [35, -52, 12.6],
+      // 泄洪道
+      [-3, -50], [3, -50],
+      // 行政辖区
+      [28, -8], [42, -8], [28, -13], [42, -2],
+      // 村庄
+      [-52, -6], [-36, 6], [-52, 20], [-38, 34], [-24, -4],
+      // 电站
+      [46, -30], [50, -21],
+      // 集装箱区与公路
+      [18, 28], [30, 20], [42, 34], [6, 40], [-8, 34],
+      [0, 20], [-12, 30], [12, 52], [-30, 48], [14, 10], [-20, 52]
+    ],
+    safeSpawns: [[34, -12], [42, -8], [0, -52], [20, -50, 12.6]]
+  }
+};
+
 function rollItem() {
   const total = ITEM_TABLE.reduce((s, i) => s + i.w, 0);
   let r = Math.random() * total;
@@ -110,21 +147,26 @@ export class LootManager {
       const i = this.world.colliders.indexOf(s.collider);
       if (i >= 0) this.world.colliders.splice(i, 1);
     }
-    this.crates = [];
-    this.safes = [];
+    // 原地清空以保持外部引用（小地图）有效
+    this.crates.length = 0;
+    this.safes.length = 0;
     this._spawnAll();
   }
 
-  // 刷新点校验：与任何碰撞体保持间距，避免箱子嵌进墙/集装箱导致无法靠近搜刮
-  _pointBlocked(x, z, pad = 0.95) {
+  // 刷新点校验：与同一高度层的碰撞体保持间距，避免箱子嵌进墙/集装箱
+  _pointBlocked(x, z, y = 0, pad = 0.95) {
+    const floorTop = y + 0.05; // 脚下地面/平台碰撞体不算障碍
     for (const c of this.world.colliders) {
-      if (c.max.y < 0.3) continue; // 忽略地面
+      if (c.max.y <= floorTop || c.min.y > y + 1.3) continue;
       if (x + pad > c.min.x && x - pad < c.max.x && z + pad > c.min.z && z - pad < c.max.z) return true;
     }
     return false;
   }
 
   _spawnAll() {
+    const cfg = MAP_LOOT[this.world.mapId] || MAP_LOOT.prison;
+    this.spawns = cfg.spawns;
+    this.safeSpawns = cfg.safeSpawns;
     this._spawnCrates(14);
     this._spawnSafes(2);
   }
@@ -136,11 +178,11 @@ export class LootManager {
 
   _spawnCrates(count) {
     const shuffled = [...this.spawns].sort(() => Math.random() - 0.5);
-    const free = shuffled.filter(([x, z]) => !this._pointBlocked(x, z));
+    const free = shuffled.filter(([x, z, y = 0]) => !this._pointBlocked(x, z, y));
     const crateM = new THREE.MeshStandardMaterial({ map: woodTexture(512, 1, '#56603f'), roughness: 0.88, metalness: 0.15 });
     const stripM = new THREE.MeshStandardMaterial({ color: 0xc9a53a, roughness: 0.4, metalness: 0.7, emissive: 0x332200 });
     for (let i = 0; i < Math.min(count, free.length); i++) {
-      const [x, z] = free[i];
+      const [x, z, y = 0] = free[i];
       const g = new THREE.Group();
       const box = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.8, 0.8), crateM);
       box.position.y = 0.4;
@@ -148,13 +190,13 @@ export class LootManager {
       const strip = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.12, 0.82), stripM);
       strip.position.y = 0.55;
       g.add(box, strip);
-      g.position.set(x, 0, z);
+      g.position.set(x, y, z);
       g.rotation.y = Math.random() * Math.PI;
       this.scene.add(g);
-      this.world.addContactShadow(x, z, 2.0, 1.7, 0.4);
+      this.world.addContactShadow(x, z, 2.0, 1.7, 0.4, y + 0.02);
       this.crates.push({
-        group: g, pos: new THREE.Vector3(x, 0, z), opened: false,
-        collider: this._trackCollider(x, 0.4, z, 1.1, 0.8, 0.9),
+        group: g, pos: new THREE.Vector3(x, y, z), opened: false,
+        collider: this._trackCollider(x, y + 0.4, z, 1.1, 0.8, 0.9),
         items: [rollItem(), ...(Math.random() < 0.4 ? [rollItem()] : [])]
       });
     }
@@ -162,14 +204,14 @@ export class LootManager {
 
   _spawnSafes(count) {
     const shuffled = [...this.safeSpawns].sort(() => Math.random() - 0.5);
-    const free = shuffled.filter(([x, z]) => !this._pointBlocked(x, z, 1.15));
+    const free = shuffled.filter(([x, z, y = 0]) => !this._pointBlocked(x, z, y, 1.15));
     const bodyM = new THREE.MeshStandardMaterial({ map: metalTexture(256, 1, '#22323e'), roughness: 0.35, metalness: 0.8 });
     const glowM = new THREE.MeshStandardMaterial({
       color: 0x0a3a44, roughness: 0.3, metalness: 0.6,
       emissive: 0x00c8ff, emissiveIntensity: 0.9
     });
     for (let i = 0; i < Math.min(count, free.length); i++) {
-      const [x, z] = free[i];
+      const [x, z, y = 0] = free[i];
       const g = new THREE.Group();
       const body = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.3, 0.75), bodyM);
       body.position.y = 0.65;
@@ -186,13 +228,13 @@ export class LootManager {
       );
       dial.position.set(0, 0.5, 0.39);
       g.add(body, stripL, stripR, panel, dial);
-      g.position.set(x, 0, z);
+      g.position.set(x, y, z);
       g.rotation.y = Math.random() * Math.PI * 2;
       this.scene.add(g);
-      this.world.addContactShadow(x, z, 2.2, 1.8, 0.45);
+      this.world.addContactShadow(x, z, 2.2, 1.8, 0.45, y + 0.02);
       this.safes.push({
-        group: g, pos: new THREE.Vector3(x, 0, z), opened: false, cracked: 0,
-        collider: this._trackCollider(x, 0.65, z, 1.0, 1.3, 0.75)
+        group: g, pos: new THREE.Vector3(x, y, z), opened: false, cracked: 0,
+        collider: this._trackCollider(x, y + 0.65, z, 1.0, 1.3, 0.75)
       });
     }
   }
@@ -219,12 +261,12 @@ export class LootManager {
     return best;
   }
 
-  open(crate, player) {
+  open(crate, player, weapon) {
     crate.opened = true;
     const msgs = [];
     for (const it of crate.items) {
       if (it.ammo) {
-        player.weapon.reserve += it.ammo;
+        weapon.reserve += it.ammo;
         msgs.push(`弹药盒 ×1（+${it.ammo} 发）`);
       } else {
         player.loot.push({ name: it.name, value: it.value });

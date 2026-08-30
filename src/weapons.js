@@ -23,6 +23,12 @@ export class Weapon {
     this._initTracers();
   }
 
+  // 切换地图重建场景后，把曳光弹池重新挂载
+  resetScene(scene) {
+    this.scene = scene;
+    for (const l of this.tracerPool) scene.add(l);
+  }
+
   _buildViewModel() {
     const g = new THREE.Group();
     const dark = new THREE.MeshStandardMaterial({ color: 0x181c20, roughness: 0.42, metalness: 0.65 });
