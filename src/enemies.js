@@ -210,18 +210,22 @@ export class EnemyManager {
     this.scene = scene;
     this.world = world;
     this.enemies = [];
-    this.spawns = [
-      [-30, -44], [-44, -30], [30, -48], [40, -36], [-20, -30],
-      [-24, 16], [4, 22], [28, 10], [42, 28], [-40, 38],
-      [-8, 46], [18, 40], [0, 58], [48, -14], [-52, 12], [34, 2]
-    ];
   }
 
   spawnAll(count = 10) {
-    const shuffled = [...this.spawns].sort(() => Math.random() - 0.5);
-    for (let i = 0; i < Math.min(count, shuffled.length); i++) {
-      const [x, z] = shuffled[i];
-      this.enemies.push(new Enemy(this.scene, this.world, new THREE.Vector3(x, 0, z)));
+    // 从地图巡逻点派生出生位置（间隔至少 14 米，自动适配任意地图）
+    const pts = [...this.world.patrolPoints].sort(() => Math.random() - 0.5);
+    const chosen = [];
+    for (const p of pts) {
+      if (chosen.length >= count) break;
+      if (chosen.every(q => q.distanceTo(p) > 14)) chosen.push(p);
+    }
+    for (const p of pts) {
+      if (chosen.length >= count) break;
+      if (!chosen.includes(p)) chosen.push(p);
+    }
+    for (const p of chosen) {
+      this.enemies.push(new Enemy(this.scene, this.world, p.clone()));
     }
   }
 

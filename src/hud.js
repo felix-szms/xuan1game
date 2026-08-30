@@ -87,7 +87,7 @@ export class HUD {
   }
 
   // 小地图：以玩家为中心旋转
-  drawMinimap(player, enemies, world, extractDist) {
+  drawMinimap(player, enemies, world, extractDist, safes = []) {
     const ctx = this.mmCtx;
     const W = 340, R = W / 2, view = 46; // 显示半径（米）
     ctx.clearRect(0, 0, W, W);
@@ -128,6 +128,15 @@ export class HUD {
       if (Math.hypot(c.pos.x - px, c.pos.z - pz) > view) continue;
       const p = tx(c.pos.x, c.pos.z);
       ctx.fillRect(p[0] - 2.5, p[1] - 2.5, 5, 5);
+    }
+
+    // 加密保险箱（青色方块，价值高优先找）
+    ctx.fillStyle = '#40e0ff';
+    for (const s of safes) {
+      if (s.opened) continue;
+      if (Math.hypot(s.pos.x - px, s.pos.z - pz) > view) continue;
+      const p = tx(s.pos.x, s.pos.z);
+      ctx.fillRect(p[0] - 3.5, p[1] - 3.5, 7, 7);
     }
 
     // 敌人
