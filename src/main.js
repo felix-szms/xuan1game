@@ -94,6 +94,10 @@ function playerFire() {
   shotSound(1);
 
   const { origin, dir } = shot;
+  // 后坐力：视口逐渐上跳（越连射越明显）+ 轻微水平散移，仅作用于实际射出的子弹
+  controls.pitch = Math.min(1.45, controls.pitch + 0.004 + weapon.recoil * 0.30);
+  controls.yaw += (Math.random() - 0.5) * 0.0016 * (1 + weapon.recoil * 9);
+
   const wallDist = raycastWorld(origin, dir, 200, world.colliders);
 
   // 与敌人做射线-球体判定（头部/躯干）
@@ -162,6 +166,8 @@ const enemyCallbacks = {
 
 function damagePlayer(dmg) {
   if (!player.alive) return;
+  // 破解过程被伤害打断（与三角洲行动一致：破解时被击中会中断）
+  if (crack.active) cancelCrack(true);
   if (player.armor > 0) {
     const absorbed = Math.min(player.armor, dmg * 0.6);
     player.armor -= absorbed;
@@ -197,8 +203,11 @@ function startGame(touchMode) {
   controls.yaw = Math.PI; // 面向地图中心
   controls.pitch = 0;
   weapon.mag = weapon.magSize; weapon.reserve = 120;
+  weapon.recoil = 0;
   extractProgress = 0;
   elapsed = 0;
+  cancelCrack(false);
+  lootMgr.reset(); // 每局重新随机布置所有物资箱与加密保险箱（全部关闭）
   hud.setLoot([]);
   hud.extractBanner(false);
   hud.toast(touchMode ? '行动开始 — 左侧摇杆移动，右侧滑动转视角' : '行动开始 — 点击画面锁定鼠标视角', 3200);
@@ -209,8 +218,78 @@ function startGame(touchMode) {
   enemyMgr.spawnAll(10);
 }
 
+// ================= 加密保险箱密码破解 =================
+const crackUI = document.getElementById('crack-ui');
+const crack = {
+  active: false, safe: null,
+  locked: 0, pos: 0, dir: 1, speed: 1.5
+};
+const ZONE_W = [0.18, 0.14, 0.11]; // 第 1/2/3 位的绿色区域宽度
+
+function startCrack(safe) {
+  crack.active = true;
+  crack.safe = safe;
+  crack.locked = 0;
+  crack.pos = Math.random();
+  crack.dir = 1;
+  crack.speed = 1.5;
+  crackUI.style.display = 'flex';
+  for (let i = 0; i < 3; i++) document.getElementById('d' + i).classList.remove('ok');
+  updateCrackUI();
+  beep(500, 0.08);
+}
+
+function cancelCrack(byDamage) {
+  crack.active = false;
+  crack.safe = null;
+  crackUI.style.display = 'none';
+  controls.jumpQueued = false; controls.useQueued = false;
+  if (byDamage) hud.toast('破解被射击打断！');
+}
+
+function updateCrackUI() {
+  const zone = ZONE_W[crack.locked] || 0.11;
+  document.getElementById('crack-zone').style.left = (50 - zone / 2 * 100) + '%';
+  document.getElementById('crack-zone').style.width = (zone * 100) + '%';
+  document.getElementById('crack-needle').style.left = 'calc(' + (crack.pos * 100) + '% - 1px)';
+}
+
+function tryLock() {
+  if (!crack.active) return;
+  controls.jumpQueued = false; controls.useQueued = false;
+  const zone = ZONE_W[crack.locked] || 0.11;
+  if (Math.abs(crack.pos - 0.5) <= zone / 2) {
+    // 锁对一位
+    document.getElementById('d' + crack.locked).classList.add('ok');
+    crack.locked++;
+    crack.speed *= 1.4;
+    beep(700 + crack.locked * 200, 0.1);
+    if (crack.locked >= 3) {
+      const msgs = lootMgr.openSafe(crack.safe, player);
+      hud.toast('保险箱开启！获得：' + msgs.join('、'), 3000);
+      hud.setLoot(player.loot);
+      cancelCrack(false);
+    }
+  } else {
+    // 失误：红闪，当前位重新转
+    beep(200, 0.12);
+    crackUI.classList.add('flash');
+    setTimeout(() => crackUI.classList.remove('flash'), 180);
+  }
+}
+
+document.getElementById('crack-lock').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); tryLock(); });
+document.getElementById('crack-cancel').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); cancelCrack(false); });
+window.addEventListener('keydown', (e) => {
+  if (crack.active) {
+    if (e.code === 'Space' || e.code === 'KeyE') { tryLock(); e.preventDefault(); }
+    if (e.code === 'Escape' || e.code === 'KeyQ') cancelCrack(false);
+  }
+});
+
 function endGame(win) {
   gameState = win ? 'win' : 'lose';
+  cancelCrack(false);
   hud.extractBanner(false);
   hud.interactTip(null);
   if (document.pointerLockElement) document.exitPointerLock();
@@ -254,6 +333,16 @@ function tick() {
   if (gameState === 'playing') {
     elapsed += dt;
     const inp = controls.sample(dt);
+
+    // ---- 密码破解进行中：推进转盘指针，冻结移动/射击/交互 ----
+    if (crack.active) {
+      crack.pos += crack.dir * crack.speed * dt;
+      if (crack.pos > 1) { crack.pos = 1; crack.dir = -1; }
+      if (crack.pos < 0) { crack.pos = 0; crack.dir = 1; }
+      updateCrackUI();
+      inp.mx = 0; inp.mz = 0; inp.sprint = false;
+      inp.jump = false; inp.fire = false; inp.reload = false; inp.use = false;
+    }
 
     // ---- 玩家移动 ----
     player.crouching = inp.crouch;
@@ -307,7 +396,7 @@ function tick() {
     camera.position.set(player.pos.x, player.pos.y + player.eyeHeight, player.pos.z);
     camera.rotation.order = 'YXZ';
     camera.rotation.y = controls.yaw;
-    camera.rotation.x = controls.pitch - weapon.recoil * 2.2;
+    camera.rotation.x = controls.pitch + weapon.recoil * 2.2;
     camera.rotation.z = 0;
 
     // ---- 射击 / 换弹 ----
@@ -319,6 +408,7 @@ function tick() {
 
     // ---- 搜刮交互 ----
     const crate = lootMgr.nearestOpenable(player.pos);
+    const safe = crack.active ? null : lootMgr.nearestSafe(player.pos);
     if (crate) {
       hud.interactTip((controls.touchMode ? '点击【互动】' : '按 <b>E</b>') + ` 搜刮物资箱`);
       if (inp.use) {
@@ -326,13 +416,16 @@ function tick() {
         hud.toast('获得：' + msgs.join('、'));
         hud.setLoot(player.loot);
       }
+    } else if (safe) {
+      hud.interactTip((controls.touchMode ? '点击【互动】' : '按 <b>E</b>') + ` 破解加密保险箱（高价值）`);
+      if (inp.use) startCrack(safe);
     } else {
       hud.interactTip(null);
     }
 
     // ---- 撤离判定 ----
     const dEx = Math.hypot(player.pos.x - world.extractPoint.x, player.pos.z - world.extractPoint.z);
-    if (dEx < world.extractRadius) {
+    if (dEx < world.extractRadius && !crack.active) {
       extractProgress += dt;
       hud.extractBanner(true, `保持位于撤离区 ${Math.ceil(5 - extractProgress)} 秒`);
       if (Math.floor(extractProgress * 2) !== Math.floor((extractProgress - dt) * 2)) beep(980, 0.08);
@@ -346,7 +439,7 @@ function tick() {
 
     hud.setHealth(player.hp, player.armor);
     hud.setAmmo(weapon.mag, weapon.reserve);
-    hud.drawMinimap(player, enemyMgr.enemies, world, dEx);
+    hud.drawMinimap(player, enemyMgr.enemies, world, dEx, lootMgr.safes);
   }
 
   composer.render();
@@ -355,7 +448,7 @@ function tick() {
 const clock = new THREE.Clock();
 
 // 调试 / 自动化测试句柄
-window.__game = { player, controls, weapon, enemyMgr, lootMgr, world, scene, camera, startGame, endGame, gameState: () => gameState };
+window.__game = { player, controls, weapon, enemyMgr, lootMgr, world, scene, camera, startGame, endGame, gameState: () => gameState, crack, tryLock, cancelCrack };
 
 // 隐藏 loading
 document.getElementById('loading').style.display = 'none';

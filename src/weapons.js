@@ -107,7 +107,8 @@ export class Weapon {
     if (this.mag <= 0) return null;
     this.mag--;
     this.cooldown = this.fireInterval;
-    this.recoil += 0.011;
+    // 瞬时后坐：连射累积（封顶），驱动准星上跳与枪口抬起动画
+    this.recoil = Math.min(0.07, this.recoil + 0.012);
     this.kick = 1;
     // 方向：相机前方 + 扩散
     const dir = new THREE.Vector3();
@@ -146,7 +147,8 @@ export class Weapon {
         this.viewmodel.rotation.z = 0;
       }
     } else {
-      // 射击晃动
+      // 射击晃动 + 枪口上抬（kick 衰减产生回弹感）
+      this.viewmodel.rotation.x = -this.kick * 0.14;
       this.viewmodel.position.z = -0.42 + this.kick * 0.05;
       this.viewmodel.position.y = -0.2 + Math.sin(performance.now() * 0.004) * 0.004;
     }

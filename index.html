@@ -71,6 +71,28 @@
   .toast-center { position: absolute; left: 50%; top: 44%; transform: translate(-50%,-50%);
                   font-size: 16px; color: #ffd76a; text-shadow: 0 1px 4px #000; opacity: 0; transition: opacity .4s; }
 
+  /* ---------- 密码破解界面 ---------- */
+  #crack-ui { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%); z-index: 25;
+              display: none; flex-direction: column; align-items: center; gap: 14px;
+              background: rgba(8,16,26,.92); border: 1px solid rgba(0,200,255,.45); border-radius: 8px;
+              padding: 26px 40px; box-shadow: 0 0 40px rgba(0,180,255,.25); }
+  #crack-ui .crack-title { font-size: 16px; letter-spacing: 4px; color: #7fe0ff; }
+  #crack-ui .digits { display: flex; gap: 12px; }
+  #crack-ui .digits span { width: 46px; height: 56px; display: flex; align-items: center; justify-content: center;
+              font-size: 26px; font-weight: 700; color: #dff6ff; background: #0c1a24;
+              border: 1px solid rgba(120,200,240,.35); border-radius: 4px; }
+  #crack-ui .digits span.ok { color: #6affb0; border-color: rgba(106,255,176,.7); }
+  #crack-ui .wheel { position: relative; width: 320px; height: 26px; background: #0c1a24;
+              border: 1px solid rgba(120,200,240,.35); border-radius: 3px; overflow: hidden; }
+  #crack-ui .zone { position: absolute; top: 0; height: 100%; left: 41%; width: 18%;
+              background: linear-gradient(90deg, rgba(60,255,150,.15), rgba(60,255,150,.55), rgba(60,255,150,.15)); }
+  #crack-ui .needle { position: absolute; top: -2px; width: 3px; height: 30px; background: #ffdd66; box-shadow: 0 0 8px #ffdd66; }
+  #crack-ui .crack-tip { font-size: 12px; color: #9db8c9; }
+  #crack-ui .crack-btns { display: flex; gap: 14px; }
+  #crack-ui .mode-btn { padding: 10px 30px; }
+  #crack-ui.flash .wheel { border-color: rgba(255,70,50,.8); }
+  #crack-ui .mode-btn { pointer-events: auto; cursor: pointer; }
+
   /* ---------- 触屏控件 ---------- */
   #touchui { position: fixed; inset: 0; z-index: 20; display: none; pointer-events: none; }
   .tbtn { position: absolute; pointer-events: auto; border-radius: 50%; border: 2px solid rgba(160,210,240,.5);
@@ -188,6 +210,17 @@
     <div class="mode-row">
       <div class="mode-btn" id="btn-pc">电脑模式<small>键鼠操作 · 点击画面锁定鼠标</small></div>
       <div class="mode-btn" id="btn-pad">平板模式<small>双摇杆触屏操作</small></div>
+    </div>
+  </div>
+
+  <div id="crack-ui">
+    <div class="crack-title">加密保险箱 · 密码破解</div>
+    <div class="digits"><span id="d0">?</span><span id="d1">?</span><span id="d2">?</span></div>
+    <div class="wheel"><div class="zone" id="crack-zone"></div><div class="needle" id="crack-needle"></div></div>
+    <div class="crack-tip">指针进入 <b style="color:#6affb0">绿色区域</b> 时按 <b style="color:#ffd76a">空格 / 锁定</b>，连续锁对 3 位</div>
+    <div class="crack-btns">
+      <div class="mode-btn" id="crack-lock">锁定</div>
+      <div class="mode-btn" id="crack-cancel">放弃</div>
     </div>
   </div>
 
