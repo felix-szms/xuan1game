@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { lootSound, beep } from './audio.js';
+import { woodTexture, metalTexture } from './textures.js';
 
 // 物资系统：普通物资箱 + 加密保险箱（每局重置、重新随机位置）
 const ITEM_TABLE = [
@@ -83,7 +84,7 @@ export class LootManager {
 
   _spawnCrates(count) {
     const shuffled = [...this.spawns].sort(() => Math.random() - 0.5);
-    const crateM = new THREE.MeshStandardMaterial({ color: 0x4a5238, roughness: 0.85, metalness: 0.2 });
+    const crateM = new THREE.MeshStandardMaterial({ map: woodTexture(512, 1, '#56603f'), roughness: 0.88, metalness: 0.15 });
     const stripM = new THREE.MeshStandardMaterial({ color: 0xc9a53a, roughness: 0.4, metalness: 0.7, emissive: 0x332200 });
     for (let i = 0; i < count; i++) {
       const [x, z] = shuffled[i];
@@ -97,6 +98,7 @@ export class LootManager {
       g.position.set(x, 0, z);
       g.rotation.y = Math.random() * Math.PI;
       this.scene.add(g);
+      this.world.addContactShadow(x, z, 2.0, 1.7, 0.4);
       this.crates.push({
         group: g, pos: new THREE.Vector3(x, 0, z), opened: false,
         collider: this._trackCollider(x, 0.4, z, 1.1, 0.8, 0.9),
@@ -107,7 +109,7 @@ export class LootManager {
 
   _spawnSafes(count) {
     const shuffled = [...this.safeSpawns].sort(() => Math.random() - 0.5);
-    const bodyM = new THREE.MeshStandardMaterial({ color: 0x1d2b36, roughness: 0.35, metalness: 0.8 });
+    const bodyM = new THREE.MeshStandardMaterial({ map: metalTexture(256, 1, '#22323e'), roughness: 0.35, metalness: 0.8 });
     const glowM = new THREE.MeshStandardMaterial({
       color: 0x0a3a44, roughness: 0.3, metalness: 0.6,
       emissive: 0x00c8ff, emissiveIntensity: 0.9
@@ -133,6 +135,7 @@ export class LootManager {
       g.position.set(x, 0, z);
       g.rotation.y = Math.random() * Math.PI * 2;
       this.scene.add(g);
+      this.world.addContactShadow(x, z, 2.2, 1.8, 0.45);
       this.safes.push({
         group: g, pos: new THREE.Vector3(x, 0, z), opened: false, cracked: 0,
         collider: this._trackCollider(x, 0.65, z, 1.0, 1.3, 0.75)

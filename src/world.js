@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { concreteTexture, groundTexture, containerTexture, metalTexture, woodTexture, plasterTexture, contactShadowTexture } from './textures.js';
 
 // ============================================================
 // 潮汐监狱 地图：几何、碰撞体、巡逻点、小地图数据
@@ -54,25 +55,26 @@ export class World {
   _build() {
     const S = this.scene;
 
-    // ---------- 材质 ----------
-    const concrete = new THREE.MeshStandardMaterial({ color: 0x7c848c, roughness: 0.95, metalness: 0.02 });
-    const concreteDark = new THREE.MeshStandardMaterial({ color: 0x555d66, roughness: 0.95 });
-    const wallPaint = new THREE.MeshStandardMaterial({ color: 0x6b7a72, roughness: 0.9 });
-    const rust = new THREE.MeshStandardMaterial({ color: 0x6e4a33, roughness: 0.85, metalness: 0.35 });
-    const steel = new THREE.MeshStandardMaterial({ color: 0x4a565f, roughness: 0.5, metalness: 0.75 });
-    const wood = new THREE.MeshStandardMaterial({ color: 0x6d5638, roughness: 0.9 });
+    // ---------- 材质（程序化照片风纹理） ----------
+    const concrete = new THREE.MeshStandardMaterial({ map: concreteTexture(512, 4, '#82898f'), roughness: 0.95, metalness: 0.02 });
+    const concreteDark = new THREE.MeshStandardMaterial({ map: groundTexture(512, 24), roughness: 0.97, color: 0xb8bcc0 });
+    const wallPaint = new THREE.MeshStandardMaterial({ map: plasterTexture(512, 4, '#6e7a72'), roughness: 0.9 });
+    const rust = new THREE.MeshStandardMaterial({ map: containerTexture('#6e4a33'), roughness: 0.85, metalness: 0.35 });
+    const steel = new THREE.MeshStandardMaterial({ map: metalTexture(256, 2, '#48545e'), roughness: 0.5, metalness: 0.75 });
+    const wood = new THREE.MeshStandardMaterial({ map: woodTexture(512, 2, '#6b5638'), roughness: 0.9 });
     const barMat = new THREE.MeshStandardMaterial({ color: 0x2c343a, roughness: 0.45, metalness: 0.85 });
-    const red = new THREE.MeshStandardMaterial({ color: 0x7a3b30, roughness: 0.8, metalness: 0.2 });
-    const blue = new THREE.MeshStandardMaterial({ color: 0x33566b, roughness: 0.8, metalness: 0.2 });
-    const green = new THREE.MeshStandardMaterial({ color: 0x4c6244, roughness: 0.8, metalness: 0.2 });
-    const yellow = new THREE.MeshStandardMaterial({ color: 0x8a7a35, roughness: 0.85, metalness: 0.15 });
+    const red = new THREE.MeshStandardMaterial({ map: containerTexture('#7a3b30'), roughness: 0.8, metalness: 0.2 });
+    const blue = new THREE.MeshStandardMaterial({ map: containerTexture('#33566b'), roughness: 0.8, metalness: 0.2 });
+    const green = new THREE.MeshStandardMaterial({ map: containerTexture('#4c6244'), roughness: 0.8, metalness: 0.2 });
+    const yellow = new THREE.MeshStandardMaterial({ map: containerTexture('#8a7a35'), roughness: 0.85, metalness: 0.15 });
     this.mats = { concrete, concreteDark, wallPaint, rust, steel, wood, barMat, red, blue, green, yellow };
+    this.shadowTex = contactShadowTexture();
 
     // ---------- 天空 / 雾 / 灯光 ----------
     S.background = new THREE.Color(0x0d1722);
     S.fog = new THREE.Fog(0x0d1722, 50, 170);
 
-    const hemi = new THREE.HemisphereLight(0x4a6280, 0x1c242c, 1.0);
+    const hemi = new THREE.HemisphereLight(0x4a6280, 0x1c242c, 0.85);
     S.add(hemi);
 
     const moon = new THREE.DirectionalLight(0xaec6e6, 1.7);
@@ -84,6 +86,23 @@ export class World {
     moon.shadow.camera.far = 250;
     moon.shadow.bias = -0.0006;
     S.add(moon);
+
+    // 星空（不受雾影响）
+    const starCount = 700;
+    const starPos = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const el = Math.random() * Math.PI * 0.46 + 0.08;
+      const r = 330;
+      starPos[i * 3] = Math.cos(el) * Math.cos(a) * r;
+      starPos[i * 3 + 1] = Math.sin(el) * r;
+      starPos[i * 3 + 2] = Math.cos(el) * Math.sin(a) * r;
+    }
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    S.add(new THREE.Points(starGeo, new THREE.PointsMaterial({
+      color: 0xcfe0ff, size: 1.4, sizeAttenuation: false, transparent: true, opacity: 0.8, fog: false
+    })));
 
     // ---------- 地面（监狱岛台） ----------
     const ground = new THREE.Mesh(new THREE.BoxGeometry(MAP_HALF * 2, 3, MAP_HALF * 2), concreteDark);
@@ -157,6 +176,7 @@ export class World {
                             [-MAP_HALF + 4, MAP_HALF - 4], [MAP_HALF - 4, MAP_HALF - 4]]) {
       this.box(5, 11, 5, concreteDark, tx, 0, tz);
       this.box(6.4, 0.6, 6.4, steel, tx, 11, tz);
+      this.addContactShadow(tx, tz, 7.5, 7.5, 0.5);
       // 塔灯
       this._lamp(tx, 12.5, tz, 0xffd9a0, 30);
     }
@@ -221,6 +241,7 @@ export class World {
     // 集装箱群
     const cont = (x, z, ry, mat, stacked) => {
       this.box(6.1, 2.6, 2.5, mat, x, 0, z, { ry });
+      this.addContactShadow(x, z, 7.6, 3.8, 0.45);
       if (stacked) this.box(6.1, 2.6, 2.5, red, x, 2.6, z, { ry });
     };
     cont(-30, 20, 0.12, blue, true);
@@ -237,6 +258,7 @@ export class World {
     // 废弃卡车
     this.box(5.5, 2.2, 2.4, rust, -8, 0, 48, { ry: 0.4 });
     this.box(2.2, 1.6, 2.2, steel, -4.6, 0, 49.8, { ry: 0.4 });
+    this.addContactShadow(-7, 48.5, 8.5, 4.5, 0.45);
     // 木箱堆
     for (const [x, z] of [[-38, 34], [-36.4, 34.6], [-37.4, 32.5], [14, 40], [15.4, 39.2], [-2, 18]]) {
       this.box(1.6, 1.6, 1.6, wood, x, 0, z, { ry: Math.random() * 0.6, noMinimap: true });
@@ -250,6 +272,7 @@ export class World {
       b.castShadow = true; b.receiveShadow = true;
       S.add(b);
       this.addCollider(x, 0.55, z, 0.84, 1.1, 0.84);
+      this.addContactShadow(x, z, 1.5, 1.5, 0.4);
     }
     // 中央高台（操场看台式）
     this.box(12, 2.2, 4, concrete, 18, 0, 52);
@@ -275,6 +298,17 @@ export class World {
       new THREE.Vector3(0, 0, 60), new THREE.Vector3(-50, 0, 8),
       new THREE.Vector3(50, 0, -12), new THREE.Vector3(-30, 0, 56)
     ];
+  }
+
+  // 伪环境光遮蔽接触阴影（贴在物件脚下的径向暗斑）
+  addContactShadow(x, z, w, d, opacity = 0.4) {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, d),
+      new THREE.MeshBasicMaterial({ map: this.shadowTex, transparent: true, opacity, depthWrite: false })
+    );
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(x, 0.02, z);
+    this.scene.add(m);
   }
 
   // 一段铁栅栏：细杆阵列 + 碰撞（两端留门柱）

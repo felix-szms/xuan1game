@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { World, moveWithCollisions, groundHeight, raycastWorld, hasLineOfSight } from './world.js';
 import { Controls } from './controls.js';
 import { Weapon } from './weapons.js';
@@ -22,6 +23,10 @@ renderer.toneMappingExposure = 1.35;
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
+// 环境光照：PMREM 预滤波的程序化环境（金属/潮湿表面产生真实反射）
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.3;
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 400);
 // 枪模补光（挂在相机上，只照亮近距离第一人称视角物体）
 const fillLight = new THREE.PointLight(0xcfe0ff, 2.2, 4, 1.5);
@@ -224,7 +229,7 @@ const crack = {
   active: false, safe: null,
   locked: 0, pos: 0, dir: 1, speed: 1.5
 };
-const ZONE_W = [0.18, 0.14, 0.11]; // 第 1/2/3 位的绿色区域宽度
+const ZONE_W = [0.20, 0.16, 0.13]; // 第 1/2/3 位的绿色区域宽度
 
 function startCrack(safe) {
   crack.active = true;
@@ -232,7 +237,7 @@ function startCrack(safe) {
   crack.locked = 0;
   crack.pos = Math.random();
   crack.dir = 1;
-  crack.speed = 1.5;
+  crack.speed = 1.05;
   crackUI.style.display = 'flex';
   for (let i = 0; i < 3; i++) document.getElementById('d' + i).classList.remove('ok');
   updateCrackUI();
@@ -262,7 +267,7 @@ function tryLock() {
     // 锁对一位
     document.getElementById('d' + crack.locked).classList.add('ok');
     crack.locked++;
-    crack.speed *= 1.4;
+    crack.speed *= 1.3;
     beep(700 + crack.locked * 200, 0.1);
     if (crack.locked >= 3) {
       const msgs = lootMgr.openSafe(crack.safe, player);
