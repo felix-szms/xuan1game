@@ -78,18 +78,74 @@ export function enemyShotSound(dist) {
   src.start(t);
 }
 
-export function hitSound(kill = false) {
+// 分层命中反馈：躯干闷响 / 爆头金属叮声 / 击杀附加低沉确认音
+export function hitSound(kind = 'body', kill = false) {
   if (!ctx) return;
   const t = ctx.currentTime;
   const o = ctx.createOscillator();
-  o.type = 'square';
-  o.frequency.value = kill ? 880 : 1400;
   const g = ctx.createGain();
-  g.gain.setValueAtTime(0.15, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
-  if (kill) o.frequency.setValueAtTime(440, t + 0.05);
+  if (kind === 'head') {
+    o.type = 'square';
+    o.frequency.setValueAtTime(1500, t);
+    o.frequency.exponentialRampToValueAtTime(700, t + 0.07);
+    g.gain.setValueAtTime(0.17, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+  } else {
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(340, t);
+    o.frequency.exponentialRampToValueAtTime(180, t + 0.06);
+    g.gain.setValueAtTime(0.16, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+  }
   o.connect(g).connect(master);
-  o.start(t); o.stop(t + 0.1);
+  o.start(t); o.stop(t + 0.12);
+  if (kill) {
+    const k = ctx.createOscillator();
+    k.type = 'sine';
+    k.frequency.setValueAtTime(kind === 'head' ? 500 : 420, t + 0.05);
+    k.frequency.exponentialRampToValueAtTime(160, t + 0.2);
+    const kg = ctx.createGain();
+    kg.gain.setValueAtTime(0.2, t + 0.05);
+    kg.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+    k.connect(kg).connect(master);
+    k.start(t + 0.05); k.stop(t + 0.26);
+  }
+}
+
+// 空投：运输机低空掠过（噪声扫频）
+export function planeFlyby() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuffer(2.2);
+  const f = ctx.createBiquadFilter();
+  f.type = 'lowpass';
+  f.frequency.setValueAtTime(220, t);
+  f.frequency.linearRampToValueAtTime(900, t + 1.0);
+  f.frequency.linearRampToValueAtTime(180, t + 2.1);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.linearRampToValueAtTime(0.32, t + 0.9);
+  g.gain.linearRampToValueAtTime(0.001, t + 2.1);
+  src.connect(f).connect(g).connect(master);
+  src.start(t);
+}
+
+// 增援警报：双音警笛
+export function alarmSound() {
+  if (!ctx) return;
+  for (let i = 0; i < 3; i++) {
+    const t = ctx.currentTime + i * 0.28;
+    const o = ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.setValueAtTime(620, t);
+    o.frequency.setValueAtTime(430, t + 0.13);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.12, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    o.connect(g).connect(master);
+    o.start(t); o.stop(t + 0.26);
+  }
 }
 
 export function reloadSound() {

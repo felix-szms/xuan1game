@@ -20,6 +20,12 @@ export class HUD {
       gunName: document.getElementById('gun-name'),
       scopeOverlay: document.getElementById('scope-overlay'),
       crosshair: document.getElementById('crosshair'),
+      loreCount: document.getElementById('lore-count'),
+      briefing: document.getElementById('briefing'),
+      bfCode: document.getElementById('bf-code'),
+      bfMap: document.getElementById('bf-map'),
+      bfText: document.getElementById('bf-text'),
+      dmgWrap: document.getElementById('dmg-dir-wrap'),
       minimap: document.getElementById('minimap')
     };
     this.mmCtx = this.el.minimap.getContext('2d');
@@ -27,6 +33,8 @@ export class HUD {
     this._hmTimer = null;
     this._scopeOn = false;
     this._gunName = '';
+    this._bfTimer = null;
+    this._dmgPool = [];
   }
 
   show() { this.el.hud.style.display = 'block'; }
@@ -68,12 +76,58 @@ export class HUD {
 
   setZoneTimer(text) { this.el.zoneTimer.textContent = text; }
 
-  hitmarker(kill) {
+  hitmarker(kill, head = false) {
     const h = this.el.hitmarker;
+    h.classList.toggle('head', head && !kill);
     h.classList.toggle('kill', kill);
     h.style.opacity = 1;
     clearTimeout(this._hmTimer);
-    this._hmTimer = setTimeout(() => { h.style.opacity = 0; }, 120);
+    this._hmTimer = setTimeout(() => { h.style.opacity = 0; }, 130);
+  }
+
+  // 受击方向指示：红色弧线指向伤害来源（relDeg：0=正前方，顺时针为正）
+  showDamageDir(relDeg) {
+    let d = this._dmgPool.find(x => x._busy && x._life <= 0);
+    if (!d) {
+      if (this._dmgPool.length >= 4) d = this._dmgPool[0];
+      else {
+        d = document.createElement('div');
+        d.className = 'dmg-dir';
+        d.innerHTML = '<span></span>';
+        this.el.dmgWrap.appendChild(d);
+        this._dmgPool.push(d);
+      }
+    }
+    d._busy = true;
+    d._life = 0.85;
+    d.style.transform = `rotate(${relDeg}deg)`;
+    d.style.transition = 'none';
+    d.style.opacity = 0.95;
+    requestAnimationFrame(() => { d.style.transition = 'opacity .8s'; d.style.opacity = 0; });
+  }
+
+  tickDamageDir(dt) {
+    for (const d of this._dmgPool) {
+      if (d._busy) {
+        d._life -= dt;
+        if (d._life <= 0) d._busy = false;
+      }
+    }
+  }
+
+  // 档案收集进度
+  setLore(found, total) {
+    this.el.loreCount.textContent = `情报档案 ${found}/${total}`;
+  }
+
+  // 开局行动简报
+  showBriefing(code, mapName, text) {
+    this.el.bfCode.textContent = code;
+    this.el.bfMap.textContent = mapName;
+    this.el.bfText.textContent = text;
+    this.el.briefing.style.opacity = 1;
+    clearTimeout(this._bfTimer);
+    this._bfTimer = setTimeout(() => { this.el.briefing.style.opacity = 0; }, 6500);
   }
 
   killfeed(text) {
@@ -107,7 +161,7 @@ export class HUD {
   }
 
   // 小地图：以玩家为中心旋转
-  drawMinimap(player, enemies, world, extractDist, safes = []) {
+  drawMinimap(player, enemies, world, extractDist, safes = [], extraMarkers = []) {
     const ctx = this.mmCtx;
     const W = 340, R = W / 2, view = 46; // 显示半径（米）
     ctx.clearRect(0, 0, W, W);
@@ -157,6 +211,16 @@ export class HUD {
       if (Math.hypot(s.pos.x - px, s.pos.z - pz) > view) continue;
       const p = tx(s.pos.x, s.pos.z);
       ctx.fillRect(p[0] - 3.5, p[1] - 3.5, 7, 7);
+    }
+
+    // 事件标记（坠机/空投）
+    for (const m of extraMarkers) {
+      if (Math.hypot(m.x - px, m.z - pz) > view) continue;
+      const p = tx(m.x, m.z);
+      ctx.fillStyle = m.color;
+      ctx.beginPath();
+      ctx.moveTo(p[0], p[1] - 5); ctx.lineTo(p[0] + 5, p[1]); ctx.lineTo(p[0], p[1] + 5); ctx.lineTo(p[0] - 5, p[1]);
+      ctx.closePath(); ctx.fill();
     }
 
     // 敌人

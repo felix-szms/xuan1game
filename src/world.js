@@ -67,6 +67,39 @@ export class World {
     return m;
   }
 
+  // 天空穹顶：渐变天幕（不受雾影响），替换死板纯色背景
+  _addSky(top, horizon, sunDir) {
+    const S = this.scene;
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(340, 20, 12),
+      new THREE.ShaderMaterial({
+        side: THREE.BackSide, depthWrite: false, fog: false,
+        uniforms: { uTop: { value: new THREE.Color(top) }, uHorizon: { value: new THREE.Color(horizon) } },
+        vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+        fragmentShader: `uniform vec3 uTop; uniform vec3 uHorizon; varying vec3 vP;
+          void main(){ float h = normalize(vP).y; gl_FragColor = vec4(mix(uHorizon, uTop, smoothstep(-0.05, 0.45, h)), 1.0); }`
+      })
+    );
+    S.add(dome);
+    // 太阳/月亮光盘
+    if (sunDir) {
+      const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(14, 24),
+        new THREE.MeshBasicMaterial({ color: sunDir.color, transparent: true, opacity: 0.9, fog: false, depthWrite: false })
+      );
+      disc.position.copy(sunDir.dir).normalize().multiplyScalar(320);
+      disc.lookAt(0, 0, 0);
+      S.add(disc);
+      const halo = new THREE.Mesh(
+        new THREE.CircleGeometry(34, 24),
+        new THREE.MeshBasicMaterial({ color: sunDir.color, transparent: true, opacity: 0.16, fog: false, depthWrite: false })
+      );
+      halo.position.copy(disc.position);
+      halo.lookAt(0, 0, 0);
+      S.add(halo);
+    }
+  }
+
   // ============================================================
   // 地图一：潮汐监狱（夜战）
   // ============================================================
@@ -91,6 +124,7 @@ export class World {
     // ---------- 天空 / 雾 / 灯光 ----------
     S.background = new THREE.Color(0x0d1722);
     S.fog = new THREE.Fog(0x0d1722, 50, 170);
+    this._addSky(0x05080f, 0x14273a, { dir: new THREE.Vector3(-60, 90, -40), color: 0xbfd2e8 });
 
     const hemi = new THREE.HemisphereLight(0x4a6280, 0x1c242c, 0.85);
     S.add(hemi);
@@ -269,6 +303,27 @@ export class World {
     // 走廊连通矮墙（引导动线）
     this.box(1, 2.5, 16, concrete, -6, 0, -12, { noMinimap: false });
 
+    // ============ 东南仓库区（扩建 POI） ============
+    const whX = 46, whZ = 58;
+    // 仓库主体 14×10，门朝西
+    this.box(14, 4.5, 0.5, wallPaint, whX, 0, whZ - 5);
+    this.box(14, 4.5, 0.5, wallPaint, whX, 0, whZ + 5);
+    this.box(0.5, 4.5, 10, wallPaint, whX + 7, 0, whZ);
+    this.box(0.5, 4.5, 3.4, wallPaint, whX - 7, 0, whZ - 3.3);
+    this.box(0.5, 4.5, 3.4, wallPaint, whX - 7, 0, whZ + 3.3);
+    this.box(0.5, 1.6, 3.2, wallPaint, whX - 7, 2.9, whZ, { noMinimap: true });
+    this.box(15, 0.4, 11, concrete, whX, 4.5, whZ, { solid: false });
+    // 内部货架与办公桌
+    this.box(4.5, 1.2, 1.2, steel, whX + 3, 0, whZ - 3);
+    this.box(4.5, 1.2, 1.2, steel, whX + 3, 0, whZ + 2);
+    this.box(2.4, 0.9, 1.1, wood, whX - 4, 0, whZ + 3.6, { noMinimap: true });
+    this._lamp(whX, 4.2, whZ, 0xd8e8ff, 26, 16);
+    // 外围：废弃叉车掩体与围栏
+    this.box(3.2, 1.8, 1.8, rust, whX - 12, 0, whZ - 2, { ry: 0.3 });
+    this.addContactShadow(whX - 12, whZ - 2, 5, 3.5, 0.4);
+    this.box(0.3, 1.2, 8, steel, whX - 3, 0, whZ + 9, { noMinimap: true });
+    this.addContactShadow(whX, whZ, 17, 13, 0.45);
+
     // ---------- 巡逻点 ----------
     this.patrolPoints = [
       new THREE.Vector3(-30, 0, -40), new THREE.Vector3(-48, 0, -28),
@@ -279,14 +334,16 @@ export class World {
       new THREE.Vector3(-40, 0, 40), new THREE.Vector3(-6, 0, 44),
       new THREE.Vector3(14, 0, 36), new THREE.Vector3(44, 0, 28),
       new THREE.Vector3(0, 0, 60), new THREE.Vector3(-50, 0, 8),
-      new THREE.Vector3(40, 0, -18), new THREE.Vector3(-26, 0, 48)
+      new THREE.Vector3(40, 0, -18), new THREE.Vector3(-26, 0, 48),
+      // 仓库区
+      new THREE.Vector3(38, 0, 58), new THREE.Vector3(50, 0, 64), new THREE.Vector3(44, 0, 50)
     ];
 
     // ---------- 出生点 / 撤离点候选（每局随机） ----------
     this.spawnPoints = [
       new THREE.Vector3(-52, 0, 40), new THREE.Vector3(52, 0, 40),
       new THREE.Vector3(-52, 0, -6), new THREE.Vector3(52, 0, -6),
-      new THREE.Vector3(-40, 0, 52), new THREE.Vector3(40, 0, 52)
+      new THREE.Vector3(-40, 0, 52), new THREE.Vector3(34, 0, 48)
     ];
     this.extractPoints = [
       new THREE.Vector3(0, 0, 84),    // 南侧码头（直升机）
@@ -331,6 +388,7 @@ export class World {
     // ---------- 黄昏光照 ----------
     S.background = new THREE.Color(0x40311f);
     S.fog = new THREE.Fog(0x40311f, 55, 190);
+    this._addSky(0x241f38, 0xb35c2e, { dir: new THREE.Vector3(-50, 38, 35), color: 0xffb066 });
     S.environmentIntensity = 0.32;
     S.add(new THREE.HemisphereLight(0xa08a64, 0x30261a, 1.0));
     const sun = new THREE.DirectionalLight(0xffc98a, 2.2);
@@ -466,6 +524,28 @@ export class World {
     hRing.position.set(-46, 0.28, -16);
     S.add(hRing);
 
+    // ---------- 燃料库（西侧扩建 POI） ----------
+    const fdX = -58, fdZ = 10;
+    const tankGeo = new THREE.CylinderGeometry(2.4, 2.4, 4.2, 16);
+    for (const [tx, tz] of [[fdX - 3, fdZ - 3], [fdX + 3, fdZ - 2], [fdX, fdZ + 4]]) {
+      const tank = new THREE.Mesh(tankGeo, rust);
+      tank.position.set(tx, 2.1, tz);
+      tank.castShadow = true; tank.receiveShadow = true;
+      S.add(tank);
+      this.addCollider(tx, 2.1, tz, 4.8, 4.2, 4.8);
+      this.addContactShadow(tx, tz, 6, 6, 0.45);
+    }
+    // 输油管与阀门
+    this.box(0.5, 0.5, 10, steel, fdX, 0.6, fdZ, { noMinimap: true });
+    // 值班房
+    this.box(6, 3, 4.5, adobe, fdX + 7, 0, fdZ + 5);
+    this.box(1.6, 1, 0.4, adobe, fdX + 7, 1.5, fdZ + 2.8, { noMinimap: true });
+    this.addContactShadow(fdX + 7, fdZ + 5, 9, 7, 0.4);
+    // 围墙矮栏
+    this.box(0.3, 1.1, 14, steel, fdX - 9, 0, fdZ, { noMinimap: true });
+    this.box(6, 1.1, 0.3, steel, fdX - 6, 0, fdZ - 8, { noMinimap: true });
+    this._lamp(fdX, 5, fdZ - 6, 0xffe0b0, 28, 18);
+
     // ---------- 场景填充：岩石 / 废车 / 掩体 ----------
     for (const [rx, rz, s] of [[10, 8, 2.2], [-14, 44, 1.8], [24, 46, 2.6], [-30, -18, 2], [16, -18, 1.6], [-6, 26, 1.5], [36, 8, 2.4]]) {
       this.box(s, s * 0.8, s, cliff, rx, 0, rz, { ry: Math.random() * 1.5, noMinimap: true });
@@ -490,7 +570,9 @@ export class World {
       new THREE.Vector3(-16, 0, 28), new THREE.Vector3(-30, 0, 12),
       new THREE.Vector3(-46, 0, -24), new THREE.Vector3(-40, 0, -28),
       new THREE.Vector3(0, 0, -48), new THREE.Vector3(-26, 0, 46),
-      new THREE.Vector3(50, 0, 44), new THREE.Vector3(-56, 0, -38)
+      new THREE.Vector3(50, 0, 44), new THREE.Vector3(-56, 0, -38),
+      // 燃料库
+      new THREE.Vector3(-54, 0, 6), new THREE.Vector3(-62, 0, 18), new THREE.Vector3(-50, 0, 20)
     ];
     this.spawnPoints = [
       new THREE.Vector3(52, 0, 28), new THREE.Vector3(30, 0, 58),
