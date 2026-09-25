@@ -328,7 +328,7 @@ export class World {
     this.patrolPoints = [
       new THREE.Vector3(-30, 0, -40), new THREE.Vector3(-48, 0, -28),
       new THREE.Vector3(-12, 0, -40), new THREE.Vector3(-20, 0, -55),
-      new THREE.Vector3(34, 0, -46), new THREE.Vector3(24, 0, -34),
+      new THREE.Vector3(34, 0, -46), new THREE.Vector3(20, 0, -34),
       new THREE.Vector3(-24, 0, 14), new THREE.Vector3(0, 0, 20),
       new THREE.Vector3(24, 0, 6), new THREE.Vector3(40, 0, 24),
       new THREE.Vector3(-40, 0, 40), new THREE.Vector3(-6, 0, 44),
@@ -572,7 +572,7 @@ export class World {
       new THREE.Vector3(0, 0, -48), new THREE.Vector3(-26, 0, 46),
       new THREE.Vector3(50, 0, 44), new THREE.Vector3(-56, 0, -38),
       // 燃料库
-      new THREE.Vector3(-54, 0, 6), new THREE.Vector3(-62, 0, 18), new THREE.Vector3(-50, 0, 20)
+      new THREE.Vector3(-46, 0, 4), new THREE.Vector3(-62, 0, 18), new THREE.Vector3(-50, 0, 20)
     ];
     this.spawnPoints = [
       new THREE.Vector3(52, 0, 28), new THREE.Vector3(30, 0, 58),
