@@ -88,6 +88,16 @@
               color: #8fd0ff; border: 1px solid rgba(143,208,255,.45); padding: 2px 10px; border-radius: 2px; }
   .map-card .mc-tag.new { color: #ff9a50; border-color: rgba(255,154,80,.5); }
 
+  /* ---------- 狙击开镜遮罩 ---------- */
+  #scope-overlay { position: fixed; inset: 0; z-index: 15; display: none; pointer-events: none;
+                   background: radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 26%, rgba(0,0,0,.5) 28%, rgba(0,0,0,.98) 33%); }
+  #scope-overlay .sl { position: absolute; background: rgba(8,12,10,.92); }
+  #scope-overlay .slh { left: 0; right: 0; top: 50%; height: 1.5px; margin-top: -0.75px; }
+  #scope-overlay .slv { top: 0; bottom: 0; left: 50%; width: 1.5px; margin-left: -0.75px; }
+  #t-swap { right: 132px; bottom: 242px; width: 58px; height: 58px; }
+  #t-scope { right: 36px; bottom: 322px; width: 64px; height: 64px;
+             border-color: rgba(143,208,255,.6); color: #bfe6ff; }
+
   /* ---------- 密码破解界面 ---------- */
   #crack-ui { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%); z-index: 25;
               display: none; flex-direction: column; align-items: center; gap: 14px;
@@ -200,6 +210,8 @@
     </div>
   </div>
 
+  <div id="scope-overlay"><div class="sl slh"></div><div class="sl slv"></div></div>
+
   <div id="touchui">
     <div id="joy"><div id="joy-knob"></div></div>
     <div class="tbtn" id="t-fire">射击</div>
@@ -207,6 +219,8 @@
     <div class="tbtn" id="t-crouch">蹲</div>
     <div class="tbtn" id="t-reload">换弹</div>
     <div class="tbtn" id="t-use">互动</div>
+    <div class="tbtn" id="t-swap">切枪</div>
+    <div class="tbtn" id="t-scope">开镜</div>
   </div>
 
   <div id="menu">

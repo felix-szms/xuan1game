@@ -9,7 +9,7 @@ import { Weapon } from './weapons.js';
 import { EnemyManager } from './enemies.js';
 import { LootManager } from './loot.js';
 import { HUD } from './hud.js';
-import { initAudio, shotSound, enemyShotSound, hitSound, reloadSound, hurtSound, beep, footstep } from './audio.js';
+import { initAudio, shotSound, sniperShotSound, enemyShotSound, hitSound, reloadSound, hurtSound, beep, footstep } from './audio.js';
 
 // ================= 渲染器 / 场景 =================
 const app = document.getElementById('app');
@@ -52,7 +52,16 @@ let enemyMgr = null;
 let currentMapId = null;
 const hud = new HUD();
 const controls = new Controls(renderer.domElement, document.getElementById('touchui'));
-const weapon = new Weapon(camera, scene);
+const rifle = new Weapon(camera, scene);
+const sniper = new Weapon(camera, scene, {
+  kind: 'sniper', name: 'M700 · 狙击枪',
+  magSize: 10, reserve: 0, rpm: 45, damage: 130,   // 一击必杀
+  shotKick: 0.05, recoilPerShot: 0.05, recoilCap: 0.12,
+  spreadBase: 0.03, reloadTime: 2.8
+});
+sniper.viewmodel.visible = false;
+sniper.owned = false; // 狙击枪需从宝箱获取
+let weapon = rifle;   // 当前手持武器
 scene.add(camera);
 
 // 按地图构建世界（切换地图或首次进入时调用）
@@ -72,6 +81,7 @@ function buildMap(mapId) {
   enemyMgr = new EnemyManager(scene, world);
   world.lootCrates = lootMgr.crates;
   weapon.resetScene(scene); // 曳光弹池重新挂到新场景
+  sniper.resetScene(scene);
   currentMapId = mapId;
   Object.assign(window.__game, { world, lootMgr, enemyMgr });
 }
@@ -109,7 +119,8 @@ function spawnImpact(point, onEnemy) {
 }
 
 function playerFire() {
-  const spread = weapon.currentSpread(player.moving, player.crouching, player.airborne);
+  const scopedNow = weapon === sniper && controls.scopeHeld;
+  const spread = weapon.currentSpread(player.moving, player.crouching, player.airborne, scopedNow);
   const shot = weapon.tryFire(spread);
   if (!shot) {
     if (weapon.mag === 0 && !weapon.reloading && weapon.reserve > 0) {
@@ -117,11 +128,11 @@ function playerFire() {
     }
     return;
   }
-  shotSound(1);
+  if (weapon.kind === 'sniper') sniperShotSound(); else shotSound(1);
 
   const { origin, dir } = shot;
   // 后坐力：视口逐渐上跳（越连射越明显）+ 轻微水平散移，仅作用于实际射出的子弹
-  controls.pitch = Math.min(1.45, controls.pitch + 0.004 + weapon.recoil * 0.30);
+  controls.pitch = Math.min(1.45, controls.pitch + weapon.shotKick + weapon.recoil * 0.30);
   controls.yaw += (Math.random() - 0.5) * 0.0016 * (1 + weapon.recoil * 9);
 
   const wallDist = raycastWorld(origin, dir, 200, world.colliders);
@@ -235,8 +246,14 @@ function startGame(touchMode, mapId = 'prison') {
   const ep = world.extractPoints[Math.floor(Math.random() * world.extractPoints.length)];
   world.extractPoint.copy(ep);
   lootMgr.setExtractPoint(ep);
-  weapon.mag = weapon.magSize; weapon.reserve = 120;
-  weapon.recoil = 0;
+  // 武器重置：每局仅携带 AS VAL，狙击枪需重新从宝箱获取
+  rifle.mag = rifle.magSize; rifle.reserve = 120; rifle.recoil = 0; rifle.reloading = false;
+  sniper.owned = false; sniper.mag = 0; sniper.reserve = 0; sniper.recoil = 0; sniper.reloading = false;
+  sniper.viewmodel.visible = false;
+  weapon = rifle;
+  controls.scopeHeld = false;
+  hud.setGun(rifle.name);
+  hud.setScope(false);
   extractProgress = 0;
   elapsed = 0;
   cancelCrack(false);
@@ -379,9 +396,10 @@ document.getElementById('btn-restart').addEventListener('click', () => {
 // ================= 主循环 =================
 let lastStepTime = 0;
 function updateFrame(dt, t) {
-  world.update(t);
-  lootMgr.update(t);
-  weapon.update(dt);
+    world.update(t);
+    lootMgr.update(t);
+    weapon.update(dt);
+    if (weapon !== rifle) rifle.update(dt); else sniper.update(dt);
 
   // 特效衰减
   for (let i = hitVfx.length - 1; i >= 0; i--) {
@@ -402,6 +420,28 @@ function updateFrame(dt, t) {
       inp.mx = 0; inp.mz = 0; inp.sprint = false;
       inp.jump = false; inp.fire = false; inp.reload = false; inp.use = false;
     }
+
+    // ---- 切枪（Q / 触屏切枪按钮）----
+    if (!crack.active && inp.swap) {
+      const next = weapon === rifle ? (sniper.owned ? sniper : null) : rifle;
+      if (next) {
+        weapon.reloading = false;
+        weapon = next;
+        if (weapon === rifle) controls.scopeHeld = false;
+        hud.setGun(weapon.name);
+        hud.toast(weapon === sniper ? '已切换 M700 狙击枪 — 右键/开镜键瞄准' : '已切换 AS VAL 突击步枪', 1500);
+        beep(520, 0.06);
+      } else {
+        hud.toast('尚未获得狙击枪 — 搜刮物资箱获取', 1600);
+      }
+    }
+
+    // ---- 开镜状态（仅狙击枪）----
+    const scopedNow = weapon === sniper && weapon.owned && controls.scopeHeld && !weapon.reloading;
+    controls.sensScale = scopedNow ? 0.32 : 1;
+    rifle.viewmodel.visible = weapon === rifle;
+    sniper.viewmodel.visible = weapon === sniper && !scopedNow;
+    hud.setScope(scopedNow);
 
     // ---- 玩家移动 ----
     player.crouching = inp.crouch;
@@ -433,8 +473,8 @@ function updateFrame(dt, t) {
       player.pos.y = ground;
     }
 
-    // 疾跑视野拉伸（增强速度感）
-    const targetFov = (inp.sprint && player.moving && !player.crouching) ? 82 : 75;
+    // 疾跑/开镜视野变化（开镜大幅变焦）
+    const targetFov = scopedNow ? 20 : ((inp.sprint && player.moving && !player.crouching) ? 82 : 75);
     if (Math.abs(camera.fov - targetFov) > 0.05) {
       camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 7);
       camera.updateProjectionMatrix();
@@ -485,7 +525,7 @@ function updateFrame(dt, t) {
     if (crate) {
       hud.interactTip((controls.touchMode ? '点击【互动】' : '按 <b>E</b>') + ` 搜刮物资箱`);
       if (inp.use) {
-        const msgs = lootMgr.open(crate, player, weapon);
+        const msgs = lootMgr.open(crate, player, weapon, sniper);
         hud.toast('获得：' + msgs.join('、'));
         hud.setLoot(player.loot);
       }
@@ -527,7 +567,7 @@ function tick() {
 const clock = new THREE.Clock();
 
 // 调试 / 自动化测试句柄
-window.__game = { player, controls, weapon, enemyMgr, lootMgr, world, scene, camera, startGame, endGame, gameState: () => gameState, crack, tryLock, cancelCrack, buildMap, updateFrame };
+window.__game = { player, controls, weapon: null, rifle, sniper, getWeapon: () => weapon, enemyMgr, lootMgr, world, scene, camera, startGame, endGame, gameState: () => gameState, crack, tryLock, cancelCrack, buildMap, updateFrame };
 buildMap('prison'); // 启动即构建监狱地图（作为菜单背景与默认地图）
 
 // 隐藏 loading

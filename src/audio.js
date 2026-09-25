@@ -38,6 +38,31 @@ export function shotSound(vol = 1) {
   src.start(t); o.start(t); o.stop(t + 0.12);
 }
 
+export function sniperShotSound() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  // 低沉长尾的狙击枪声
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuffer(0.32);
+  const f = ctx.createBiquadFilter();
+  f.type = 'lowpass';
+  f.frequency.setValueAtTime(1500, t);
+  f.frequency.exponentialRampToValueAtTime(110, t + 0.3);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(1.0, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+  const o = ctx.createOscillator();
+  o.type = 'triangle';
+  o.frequency.setValueAtTime(90, t);
+  o.frequency.exponentialRampToValueAtTime(34, t + 0.26);
+  const og = ctx.createGain();
+  og.gain.setValueAtTime(0.7, t);
+  og.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+  src.connect(f).connect(g).connect(master);
+  o.connect(og).connect(master);
+  src.start(t); o.start(t); o.stop(t + 0.3);
+}
+
 export function enemyShotSound(dist) {
   if (!ctx) return;
   const vol = Math.max(0.05, 0.7 - dist / 60) * 0.8;

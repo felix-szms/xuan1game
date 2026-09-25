@@ -17,14 +17,34 @@ export class HUD {
       extractBanner: document.getElementById('extract-banner'),
       extractProgress: document.getElementById('extract-progress'),
       toast: document.getElementById('toast'),
+      gunName: document.getElementById('gun-name'),
+      scopeOverlay: document.getElementById('scope-overlay'),
+      crosshair: document.getElementById('crosshair'),
       minimap: document.getElementById('minimap')
     };
     this.mmCtx = this.el.minimap.getContext('2d');
     this._toastTimer = null;
     this._hmTimer = null;
+    this._scopeOn = false;
+    this._gunName = '';
   }
 
   show() { this.el.hud.style.display = 'block'; }
+
+  setGun(name) {
+    if (this._gunName !== name) {
+      this._gunName = name;
+      this.el.gunName.textContent = name;
+    }
+  }
+
+  // 开镜状态：显示瞄准镜遮罩，隐藏准星
+  setScope(on) {
+    if (this._scopeOn === on) return;
+    this._scopeOn = on;
+    this.el.scopeOverlay.style.display = on ? 'block' : 'none';
+    this.el.crosshair.style.display = on ? 'none' : 'block';
+  }
 
   setHealth(hp, armor) {
     const f = this.el.hp;

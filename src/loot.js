@@ -4,13 +4,15 @@ import { woodTexture, metalTexture } from './textures.js';
 
 // 物资系统：普通物资箱 + 加密保险箱（每局重置、重新随机位置）
 const ITEM_TABLE = [
-  { name: '机械零件', value: 1200, w: 26 },
-  { name: '军用绷带', value: 800, w: 20 },
-  { name: '弹药盒', value: 600, w: 18, ammo: 60 },
+  { name: '机械零件', value: 1200, w: 24 },
+  { name: '军用绷带', value: 800, w: 18 },
+  { name: '弹药盒', value: 600, w: 16, ammo: 60 },
   { name: '加密门卡', value: 3000, w: 12 },
   { name: '军用硬盘', value: 5000, w: 8 },
   { name: '金条', value: 8000, w: 4 },
-  { name: '红酒收藏款', value: 2400, w: 12 }
+  { name: '红酒收藏款', value: 2400, w: 11 },
+  // 狙击枪：只能通过宝箱获取（含 10 发弹），后续拾取转化为狙击弹
+  { name: 'M700 狙击枪', value: 9000, w: 9, sniper: true }
 ];
 
 // 加密保险箱专属高价值物资
@@ -261,13 +263,26 @@ export class LootManager {
     return best;
   }
 
-  open(crate, player, weapon) {
+  open(crate, player, weapon, sniper) {
     crate.opened = true;
     const msgs = [];
     for (const it of crate.items) {
-      if (it.ammo) {
-        weapon.reserve += it.ammo;
-        msgs.push(`弹药盒 ×1（+${it.ammo} 发）`);
+      if (it.sniper) {
+        if (sniper && !sniper.owned) {
+          sniper.owned = true;
+          sniper.mag = sniper.magSize; // 含 10 发弹（弹匣全满）
+          sniper.reserve = 0;
+          sniper.reloading = false;
+          msgs.push('M700 狙击枪 ×1（含 10 发狙击弹，按 Q 切换）');
+        } else if (sniper) {
+          sniper.reserve += 5;
+          msgs.push('狙击弹 ×5');
+        }
+      } else if (it.ammo) {
+        // 弹药盒补给当前手持武器（狙击枪按 10 发/盒折算）
+        const add = weapon && weapon.kind === 'sniper' ? 10 : it.ammo;
+        weapon.reserve += add;
+        msgs.push(`弹药盒 ×1（+${add} 发）`);
       } else {
         player.loot.push({ name: it.name, value: it.value });
         msgs.push(`${it.name} ¥${it.value}`);
