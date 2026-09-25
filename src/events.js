@@ -59,9 +59,14 @@ export class RandomEvents {
     const cfg = EVENT_CFG[this.world.mapId] || EVENT_CFG.prison;
     const roll = (p, f) => (f !== undefined ? f >= 0.5 : Math.random() < p);
 
-    // ---- 事件一：坠机残骸（开局即在场） ----
+    // ---- 事件一：坠机残骸（开局即在场；落点避开巡逻点，防止把守卫罩进残骸） ----
     if (roll(0.7, force.crash)) {
-      const [cx, cz] = cfg.crashPoints[Math.floor(Math.random() * cfg.crashPoints.length)];
+      const candidates = cfg.crashPoints.filter(
+        (p) => !this.world.patrolPoints.some((q) => Math.hypot(q.x - p[0], q.z - p[1]) < 8)
+      );
+      const [cx, cz] = candidates.length
+        ? candidates[Math.floor(Math.random() * candidates.length)]
+        : cfg.crashPoints[0];
       const g = new THREE.Group();
       const metal = new THREE.MeshStandardMaterial({ color: 0x3a4148, roughness: 0.6, metalness: 0.7 });
       const burnt = new THREE.MeshStandardMaterial({ color: 0x181a1c, roughness: 0.9 });

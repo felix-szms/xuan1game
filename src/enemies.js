@@ -4,6 +4,27 @@ import { moveWithCollisions, groundHeight, hasLineOfSight } from './world.js';
 // 武装看守 AI：巡逻 → 察觉 → 交战；铰接动画（髋/肩枢轴摆动、举枪、起伏、踉跄、倒地）
 const IDLE = 0, PATROL = 1, COMBAT = 2, DEAD = 3;
 
+// 出生点安全网：若点位被墙体/物件碰撞体覆盖（地图迭代易发生），在周围环搜最近可站位
+function pointBlocked(world, x, z, pad = 0.55) {
+  for (const c of world.colliders) {
+    if (c.max.y < 0.3) continue;
+    if (x + pad > c.min.x && x - pad < c.max.x && z + pad > c.min.z && z - pad < c.max.z) return true;
+  }
+  return false;
+}
+
+function findFreeSpot(world, x, z) {
+  if (!pointBlocked(world, x, z)) return { x, z };
+  for (let r = 1; r <= 12; r += 0.75) {
+    for (let a = 0; a < 14; a++) {
+      const ang = (a / 14) * Math.PI * 2;
+      const nx = x + Math.cos(ang) * r, nz = z + Math.sin(ang) * r;
+      if (!pointBlocked(world, nx, nz)) return { x: nx, z: nz };
+    }
+  }
+  return { x, z };
+}
+
 export class Enemy {
   constructor(scene, world, pos) {
     this.scene = scene;
@@ -271,13 +292,15 @@ export class EnemyManager {
       if (!chosen.includes(p)) chosen.push(p);
     }
     for (const p of chosen) {
-      this.enemies.push(new Enemy(this.scene, this.world, p.clone()));
+      const spot = findFreeSpot(this.world, p.x, p.z);
+      this.enemies.push(new Enemy(this.scene, this.world, new THREE.Vector3(spot.x, 0, spot.z)));
     }
   }
 
   // 运行时增援/事件投放
   spawnAt(x, z, opts = {}) {
-    const e = new Enemy(this.scene, this.world, new THREE.Vector3(x, 0, z));
+    const spot = findFreeSpot(this.world, x, z);
+    const e = new Enemy(this.scene, this.world, new THREE.Vector3(spot.x, 0, spot.z));
     if (opts.hunt && opts.target) {
       e.state = 2; // COMBAT：径直向玩家最后位置移动
       e.lastSeen.copy(opts.target);
