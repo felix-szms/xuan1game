@@ -4,13 +4,15 @@ import { woodTexture, metalTexture } from './textures.js';
 
 // 物资系统：普通物资箱 + 加密保险箱（每局重置、重新随机位置）
 const ITEM_TABLE = [
-  { name: '机械零件', value: 1200, w: 26 },
-  { name: '军用绷带', value: 800, w: 20 },
-  { name: '弹药盒', value: 600, w: 18, ammo: 60 },
+  { name: '机械零件', value: 1200, w: 24 },
+  { name: '军用绷带', value: 800, w: 18 },
+  { name: '弹药盒', value: 600, w: 16, ammo: 60 },
   { name: '加密门卡', value: 3000, w: 12 },
   { name: '军用硬盘', value: 5000, w: 8 },
   { name: '金条', value: 8000, w: 4 },
-  { name: '红酒收藏款', value: 2400, w: 12 }
+  { name: '红酒收藏款', value: 2400, w: 11 },
+  // 狙击枪：只能通过宝箱获取（含 10 发弹），后续拾取转化为狙击弹
+  { name: 'M700 狙击枪', value: 9000, w: 9, sniper: true }
 ];
 
 // 加密保险箱专属高价值物资
@@ -33,9 +35,11 @@ const MAP_LOOT = {
       [-48.5, -52], [-41.5, -52], [-34.5, -52], [-27.5, -52], [-20.5, -52], [-13.5, -52],
       [-48.5, -29], [-41.5, -29], [-34.5, -29], [-27.5, -29], [-20.5, -29], [-13.5, -29],
       [-44, -41], [-36, -41], [-20, -41], [-8, -41],
-      [24, -52], [38, -52], [30, -32], [44, -50]
+      [24, -52], [38, -52], [30, -32], [44, -50],
+      // 东南仓库区
+      [46, 58], [42, 60], [50, 62], [44, 55]
     ],
-    safeSpawns: [[-48, -41], [-30, -41], [-12, -41], [28, -44], [44, -36], [-36, 33]]
+    safeSpawns: [[-48, -41], [-30, -41], [-12, -41], [28, -44], [44, -36], [-36, 33], [46, 60]]
   },
   dam: {
     spawns: [
@@ -53,9 +57,11 @@ const MAP_LOOT = {
       [46, -30], [50, -21],
       // 集装箱区与公路
       [18, 28], [30, 20], [42, 34], [6, 40], [-8, 34],
-      [0, 20], [-12, 30], [12, 52], [-30, 48], [14, 10], [-20, 52]
+      [0, 20], [-12, 30], [12, 52], [-30, 48], [14, 10], [24, 54],
+      // 燃料库
+      [-58, 12], [-54, 8], [-62, 16], [-51, 15]
     ],
-    safeSpawns: [[34, -12], [42, -8], [0, -52], [20, -50, 12.6]]
+    safeSpawns: [[34, -12], [42, -8], [0, -52], [20, -50, 12.6], [-56, 8]]
   }
 };
 
@@ -72,6 +78,29 @@ function rollItem() {
 function rollSafeItem() {
   return SAFE_TABLE[Math.floor(Math.random() * SAFE_TABLE.length)];
 }
+export { rollSafeItem };
+
+// 每张地图的情报档案（环境叙事收集品，固定点位）
+const MAP_LORE = {
+  prison: {
+    points: [[-30, -24], [-52, 20], [0, 11], [18, 52, 2.2]],
+    texts: [
+      '【监狱长日志·一】潮位上涨的第七天，柴油发电机停了。我们决定把重犯转移到坝区——如果直升机还能来的话。',
+      '【守卫录音带】……东墙外的水已经淹到哨塔二层。指挥部没有回电。重复，指挥部没有回电。',
+      '【墙上的刻字】放风场的水泥墙上，有人反复刻下同一句话：“潮水会带走一切，除了罪。”',
+      '【监狱长日志·末】保险箱的密码是撤离那天的日期。如果有人读到这本日志——别开箱，那是我留给死人的。'
+    ]
+  },
+  dam: {
+    points: [[34, -12], [0, -47], [-62, 2], [44, -26]],
+    texts: [
+      '【工程师笔记】大坝的承重远超设计值。战争开始之后，他们往坝顶机房里塞满了不该放的东西。',
+      '【巡逻队记录】03:00，北岸探照灯又灭了。对岸有灯语闪烁——不是我们的频率。',
+      '【值班室交接簿】燃料库今晚起只留两人。其余人向行政辖区集结，带不走的设备就地封存。',
+      '【加密电报残页】“渡鸦”已入境，货在坝顶。撤离点每日更换——盯死绿色信号烟。'
+    ]
+  }
+};
 
 export class LootManager {
   constructor(scene, world) {
@@ -151,6 +180,7 @@ export class LootManager {
     this.crates.length = 0;
     this.safes.length = 0;
     this._spawnAll();
+    this._spawnLore();
   }
 
   // 刷新点校验：与同一高度层的碰撞体保持间距，避免箱子嵌进墙/集装箱
@@ -171,6 +201,51 @@ export class LootManager {
     this._spawnSafes(2);
   }
 
+  // ============ 情报档案（环境叙事收集品） ============
+  _spawnLore() {
+    const cfg = MAP_LORE[this.world.mapId] || MAP_LORE.prison;
+    this.loreItems = [];
+    this.loreTotal = cfg.points.length;
+    const paperM = new THREE.MeshStandardMaterial({
+      color: 0xd8e6ef, roughness: 0.6,
+      emissive: 0x00c8ff, emissiveIntensity: 0.55
+    });
+    cfg.points.forEach(([x, z, y = 0], i) => {
+      const g = new THREE.Group();
+      const sheet = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.42, 0.05), paperM);
+      sheet.position.y = 0.21;
+      sheet.rotation.z = 0.1;
+      const clip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.07),
+        new THREE.MeshStandardMaterial({ color: 0x30373c, metalness: 0.8, roughness: 0.3 }));
+      clip.position.y = 0.44;
+      g.add(sheet, clip);
+      g.position.set(x, y, z);
+      g.rotation.y = Math.random() * Math.PI * 2;
+      this.scene.add(g);
+      this.loreItems.push({ group: g, pos: new THREE.Vector3(x, y, z), picked: false, text: cfg.texts[i] });
+    });
+  }
+
+  nearestLore(playerPos) {
+    let best = null, bestD = 2.2;
+    for (const l of this.loreItems || []) {
+      if (l.picked) continue;
+      const d = Math.hypot(l.pos.x - playerPos.x, l.pos.z - playerPos.z);
+      if (d < bestD && Math.abs(l.pos.y - playerPos.y) < 2) { best = l; bestD = d; }
+    }
+    return best;
+  }
+
+  pickLore(lore) {
+    lore.picked = true;
+    this.scene.remove(lore.group);
+    return lore.text;
+  }
+
+  loreFoundCount() {
+    return (this.loreItems || []).filter(l => l.picked).length;
+  }
+
   _trackCollider(x, y, z, sx, sy, sz) {
     this.world.addCollider(x, y, z, sx, sy, sz);
     return this.world.colliders[this.world.colliders.length - 1];
@@ -179,27 +254,41 @@ export class LootManager {
   _spawnCrates(count) {
     const shuffled = [...this.spawns].sort(() => Math.random() - 0.5);
     const free = shuffled.filter(([x, z, y = 0]) => !this._pointBlocked(x, z, y));
-    const crateM = new THREE.MeshStandardMaterial({ map: woodTexture(512, 1, '#56603f'), roughness: 0.88, metalness: 0.15 });
-    const stripM = new THREE.MeshStandardMaterial({ color: 0xc9a53a, roughness: 0.4, metalness: 0.7, emissive: 0x332200 });
     for (let i = 0; i < Math.min(count, free.length); i++) {
       const [x, z, y = 0] = free[i];
-      const g = new THREE.Group();
-      const box = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.8, 0.8), crateM);
-      box.position.y = 0.4;
-      box.castShadow = true; box.receiveShadow = true;
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.12, 0.82), stripM);
-      strip.position.y = 0.55;
-      g.add(box, strip);
-      g.position.set(x, y, z);
-      g.rotation.y = Math.random() * Math.PI;
-      this.scene.add(g);
-      this.world.addContactShadow(x, z, 2.0, 1.7, 0.4, y + 0.02);
-      this.crates.push({
-        group: g, pos: new THREE.Vector3(x, y, z), opened: false,
-        collider: this._trackCollider(x, y + 0.4, z, 1.1, 0.8, 0.9),
-        items: [rollItem(), ...(Math.random() < 0.4 ? [rollItem()] : [])]
-      });
+      this._makeCrate(x, y, z, [rollItem(), ...(Math.random() < 0.4 ? [rollItem()] : [])]);
     }
+  }
+
+  // 运行时投放特殊物资箱（空投/坠机高价值箱，小地图金色标记）
+  spawnSpecialCrate(x, z, items) {
+    return this._makeCrate(x, 0, z, items, true);
+  }
+
+  _makeCrate(x, y, z, items, special = false) {
+    const crateM = new THREE.MeshStandardMaterial({ map: woodTexture(512, 1, special ? '#4a4234' : '#56603f'), roughness: 0.88, metalness: 0.15 });
+    const stripM = new THREE.MeshStandardMaterial({
+      color: special ? 0xffb040 : 0xc9a53a, roughness: 0.4, metalness: 0.7,
+      emissive: special ? 0x442200 : 0x332200
+    });
+    const g = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.8, 0.8), crateM);
+    box.position.y = 0.4;
+    box.castShadow = true; box.receiveShadow = true;
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.12, 0.82), stripM);
+    strip.position.y = 0.55;
+    g.add(box, strip);
+    g.position.set(x, y, z);
+    g.rotation.y = Math.random() * Math.PI;
+    this.scene.add(g);
+    this.world.addContactShadow(x, z, 2.0, 1.7, 0.4, y + 0.02);
+    const crate = {
+      group: g, pos: new THREE.Vector3(x, y, z), opened: false, special,
+      collider: this._trackCollider(x, y + 0.4, z, 1.1, 0.8, 0.9),
+      items
+    };
+    this.crates.push(crate);
+    return crate;
   }
 
   _spawnSafes(count) {
@@ -261,13 +350,26 @@ export class LootManager {
     return best;
   }
 
-  open(crate, player, weapon) {
+  open(crate, player, weapon, sniper) {
     crate.opened = true;
     const msgs = [];
     for (const it of crate.items) {
-      if (it.ammo) {
-        weapon.reserve += it.ammo;
-        msgs.push(`弹药盒 ×1（+${it.ammo} 发）`);
+      if (it.sniper) {
+        if (sniper && !sniper.owned) {
+          sniper.owned = true;
+          sniper.mag = sniper.magSize; // 含 10 发弹（弹匣全满）
+          sniper.reserve = 0;
+          sniper.reloading = false;
+          msgs.push('M700 狙击枪 ×1（含 10 发狙击弹，按 Q 切换）');
+        } else if (sniper) {
+          sniper.reserve += 5;
+          msgs.push('狙击弹 ×5');
+        }
+      } else if (it.ammo) {
+        // 弹药盒补给当前手持武器（狙击枪按 10 发/盒折算）
+        const add = weapon && weapon.kind === 'sniper' ? 10 : it.ammo;
+        weapon.reserve += add;
+        msgs.push(`弹药盒 ×1（+${add} 发）`);
       } else {
         player.loot.push({ name: it.name, value: it.value });
         msgs.push(`${it.name} ¥${it.value}`);
@@ -311,6 +413,12 @@ export class LootManager {
       if (s.opened) continue;
       const p = s.group.children[1].material;
       if (p.emissiveIntensity !== undefined) p.emissiveIntensity = 0.6 + Math.sin(t * 3 + s.pos.x) * 0.35;
+    }
+    // 情报档案悬浮旋转
+    for (const l of this.loreItems || []) {
+      if (l.picked) continue;
+      l.group.rotation.y = t * 0.8;
+      l.group.position.y = l.pos.y + 0.08 + Math.sin(t * 2 + l.pos.x) * 0.04;
     }
   }
 }

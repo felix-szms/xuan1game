@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { World, MAPS, moveWithCollisions, groundHeight, raycastWorld, hasLineOfSight } from './world.js';
 import { Controls } from './controls.js';
@@ -9,7 +10,8 @@ import { Weapon } from './weapons.js';
 import { EnemyManager } from './enemies.js';
 import { LootManager } from './loot.js';
 import { HUD } from './hud.js';
-import { initAudio, shotSound, enemyShotSound, hitSound, reloadSound, hurtSound, beep, footstep } from './audio.js';
+import { initAudio, shotSound, sniperShotSound, enemyShotSound, hitSound, reloadSound, hurtSound, beep, footstep } from './audio.js';
+import { RandomEvents } from './events.js';
 
 // ================= 渲染器 / 场景 =================
 const app = document.getElementById('app');
@@ -34,9 +36,25 @@ camera.add(fillLight);
 fillLight.position.set(0.2, 0.1, -0.3);
 
 const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, camera));
+// SSAO 在部分环境会渲染黑屏，默认关闭；加 ?ssao 参数可实验性开启
+const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
+const useSSAO = !isTouchDevice && location.search.includes('ssao');
+if (useSSAO) {
+  const ssao = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight);
+  ssao.kernelRadius = 0.55;
+  ssao.minDistance = 0.0008;
+  ssao.maxDistance = 0.09;
+  composer.addPass(ssao);
+} else {
+  composer.addPass(new RenderPass(scene, camera));
+}
 const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.32, 0.6, 0.85);
 composer.addPass(bloom);
+
+// 动态分辨率：帧率不足时自动降低渲染精度，空闲时恢复
+const maxPR = Math.min(window.devicePixelRatio, 2);
+let curPR = maxPR;
+let fpsAcc = 0, fpsCount = 0;
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -52,10 +70,20 @@ let enemyMgr = null;
 let currentMapId = null;
 const hud = new HUD();
 const controls = new Controls(renderer.domElement, document.getElementById('touchui'));
-const weapon = new Weapon(camera, scene);
+const rifle = new Weapon(camera, scene);
+const sniper = new Weapon(camera, scene, {
+  kind: 'sniper', name: 'M700 · 狙击枪',
+  magSize: 10, reserve: 0, rpm: 45, damage: 130,   // 一击必杀
+  shotKick: 0.05, recoilPerShot: 0.05, recoilCap: 0.12,
+  spreadBase: 0.03, reloadTime: 2.8
+});
+sniper.viewmodel.visible = false;
+sniper.owned = false; // 狙击枪需从宝箱获取
+let weapon = rifle;   // 当前手持武器
 scene.add(camera);
 
 // 按地图构建世界（切换地图或首次进入时调用）
+let events = null;
 function buildMap(mapId) {
   // 清空场景（保留相机及其子物体：枪模/补光），并释放几何体内存
   for (let i = scene.children.length - 1; i >= 0; i--) {
@@ -70,10 +98,12 @@ function buildMap(mapId) {
   world = new World(scene, mapId);
   lootMgr = new LootManager(scene, world);
   enemyMgr = new EnemyManager(scene, world);
+  events = new RandomEvents(scene, world, enemyMgr, lootMgr, hud);
   world.lootCrates = lootMgr.crates;
   weapon.resetScene(scene); // 曳光弹池重新挂到新场景
+  sniper.resetScene(scene);
   currentMapId = mapId;
-  Object.assign(window.__game, { world, lootMgr, enemyMgr });
+  Object.assign(window.__game, { world, lootMgr, enemyMgr, events });
 }
 
 // 玩家状态
@@ -96,8 +126,41 @@ let extractProgress = 0;
 let gameState = 'menu'; // menu | playing | win | lose
 let elapsed = 0;
 
-// ================= 玩家射击命中判定 =================
-const hitVfx = [];
+// ================= 命中反馈特效 =================
+const hitVfx = [];   // 短暂停留的命中标记
+const puffPool = []; // 血雾/尘埃粒子池
+
+function spawnPuff(point, dir, color, count, speedScale = 1) {
+  for (let i = 0; i < count; i++) {
+    let p = puffPool.find(p0 => p0.life <= 0);
+    if (!p) {
+      p = {
+        mesh: new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 6), new THREE.MeshBasicMaterial({ transparent: true })),
+        vel: new THREE.Vector3(), life: 0
+      };
+      scene.add(p.mesh);
+      puffPool.push(p);
+    }
+    p.mesh.visible = true;
+    p.mesh.material.color.setHex(color);
+    p.mesh.material.opacity = 0.95;
+    p.mesh.position.copy(point);
+    p.vel.set(
+      (Math.random() - 0.5) * 2.4 + (dir ? dir.x : 0) * 1.6,
+      Math.random() * 2.4 + 0.4,
+      (Math.random() - 0.5) * 2.4 + (dir ? dir.z : 0) * 1.6
+    ).multiplyScalar(speedScale);
+    p.life = 0.3 + Math.random() * 0.18;
+    p.mesh.scale.setScalar(0.6 + Math.random() * 0.9);
+  }
+}
+
+function spawnBlood(point, dir) { spawnPuff(point, dir, 0x8a1a12, 7, 1); }
+function spawnDust(point, dir) {
+  spawnImpact(point, false);
+  spawnPuff(point, dir, 0x9a9484, 4, 0.7);
+}
+
 function spawnImpact(point, onEnemy) {
   const m = new THREE.Mesh(
     new THREE.SphereGeometry(onEnemy ? 0.06 : 0.045, 6, 6),
@@ -108,8 +171,21 @@ function spawnImpact(point, onEnemy) {
   hitVfx.push({ mesh: m, life: 0.15 });
 }
 
+// 命中弹孔标记（墙面留痕）
+function spawnImpactMark(point, normal) {
+  const m = new THREE.Mesh(
+    new THREE.CircleGeometry(0.05, 8),
+    new THREE.MeshBasicMaterial({ color: 0x1a1c1e, transparent: true, opacity: 0.85 })
+  );
+  m.position.copy(point).addScaledVector(normal, 0.01);
+  m.lookAt(point.clone().sub(normal));
+  scene.add(m);
+  hitVfx.push({ mesh: m, life: 6, fade: true });
+}
+
 function playerFire() {
-  const spread = weapon.currentSpread(player.moving, player.crouching, player.airborne);
+  const scopedNow = weapon === sniper && controls.scopeHeld;
+  const spread = weapon.currentSpread(player.moving, player.crouching, player.airborne, scopedNow);
   const shot = weapon.tryFire(spread);
   if (!shot) {
     if (weapon.mag === 0 && !weapon.reloading && weapon.reserve > 0) {
@@ -117,11 +193,11 @@ function playerFire() {
     }
     return;
   }
-  shotSound(1);
+  if (weapon.kind === 'sniper') sniperShotSound(); else shotSound(1);
 
   const { origin, dir } = shot;
   // 后坐力：视口逐渐上跳（越连射越明显）+ 轻微水平散移，仅作用于实际射出的子弹
-  controls.pitch = Math.min(1.45, controls.pitch + 0.004 + weapon.recoil * 0.30);
+  controls.pitch = Math.min(1.45, controls.pitch + weapon.shotKick + weapon.recoil * 0.30);
   controls.yaw += (Math.random() - 0.5) * 0.0016 * (1 + weapon.recoil * 9);
 
   const wallDist = raycastWorld(origin, dir, 200, world.colliders);
@@ -152,15 +228,17 @@ function playerFire() {
 
   if (bestEnemy) {
     const killed = bestEnemy.hitBy(weapon.damage, bestHead);
-    spawnImpact(hitPoint, true);
-    hud.hitmarker(killed);
-    hitSound(killed);
+    spawnBlood(hitPoint, dir);
+    hud.hitmarker(killed, bestHead);
+    hitSound(bestHead ? 'head' : 'body', killed);
     if (killed) {
       player.kills++;
       hud.killfeed(`你击倒了武装看守 ${bestHead ? '（爆头）' : ''}`);
     }
   } else if (bestDist < 200) {
-    spawnImpact(end, false);
+    spawnDust(end, dir);
+    // 弹孔留痕（用命中点反推法线近似：取射入反方向）
+    spawnImpactMark(end.clone().addScaledVector(dir, -0.02), dir.clone().negate());
   }
 }
 
@@ -178,7 +256,7 @@ const enemyCallbacks = {
     if (Math.random() < hitChance) {
       weapon.spawnTracer(from, playerEye.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.2, (Math.random() - 0.5) * 0.2, (Math.random() - 0.5) * 0.2)));
       const dmg = Math.random() < 0.3 ? 0 : 5 + Math.random() * 6;
-      if (dmg > 0) damagePlayer(dmg);
+      if (dmg > 0) damagePlayer(dmg, enemy.pos);
     } else {
       const miss = playerEye.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 3));
       weapon.spawnTracer(from, miss);
@@ -190,10 +268,19 @@ const enemyCallbacks = {
   }
 };
 
-function damagePlayer(dmg) {
+function damagePlayer(dmg, fromPos) {
   if (!player.alive) return;
   // 破解过程被伤害打断（与三角洲行动一致：破解时被击中会中断）
   if (crack.active) cancelCrack(true);
+  // 受击方向指示：弧线指向射手方位
+  if (fromPos) {
+    const bearing = Math.atan2(fromPos.x - player.pos.x, fromPos.z - player.pos.z);
+    const facingBearing = controls.yaw + Math.PI;
+    let rel = bearing - facingBearing;
+    while (rel > Math.PI) rel -= Math.PI * 2;
+    while (rel < -Math.PI) rel += Math.PI * 2;
+    hud.showDamageDir(-rel * 57.3);
+  }
   if (player.armor > 0) {
     const absorbed = Math.min(player.armor, dmg * 0.6);
     player.armor -= absorbed;
@@ -214,8 +301,21 @@ const endEl = document.getElementById('end-screen');
 const briefPanel = document.getElementById('brief-panel');
 let chosenMode = 'pc';
 
-function startGame(touchMode, mapId = 'prison') {
+// 每张地图的行动简报（环境叙事）
+const MAP_BRIEF = {
+  prison: {
+    code: '行动代号 X-7 · 绝密',
+    text: '七十二小时前，潮汐监狱与外界失去联络。卫星图显示狱方在失联前转移了一批高价值物资——它们还留在监狱某处。看守已经失控游荡，潮水正在再次上涨。潜入、搜刮、在水位淹没码头之前撤离。'
+  },
+  dam: {
+    code: '行动代号 X-9 · 绝密',
+    text: '零号大坝战后被武装看守盘踞，坝顶机房里封存着战前的机密货物。情报显示“渡鸦”已经入境，交易随时可能发生。注意：撤离点每日更换，出发前确认小地图上的绿色标记。潜入、搜刮、抢在所有人之前撤离。'
+  }
+};
+
+function startGame(touchMode, mapId = 'prison', force = {}) {
   initAudio();
+  if (currentMapId !== mapId) buildMap(mapId); // 直接调用时自动切换地图
   controls.enableTouch(touchMode);
   hud.el.hud.classList.toggle('touch', touchMode);
   menuEl.style.display = 'none';
@@ -235,12 +335,22 @@ function startGame(touchMode, mapId = 'prison') {
   const ep = world.extractPoints[Math.floor(Math.random() * world.extractPoints.length)];
   world.extractPoint.copy(ep);
   lootMgr.setExtractPoint(ep);
-  weapon.mag = weapon.magSize; weapon.reserve = 120;
-  weapon.recoil = 0;
+  // 武器重置：每局仅携带 AS VAL，狙击枪需重新从宝箱获取
+  rifle.mag = rifle.magSize; rifle.reserve = 120; rifle.recoil = 0; rifle.reloading = false;
+  sniper.owned = false; sniper.mag = 0; sniper.reserve = 0; sniper.recoil = 0; sniper.reloading = false;
+  sniper.viewmodel.visible = false;
+  weapon = rifle;
+  controls.scopeHeld = false;
+  hud.setGun(rifle.name);
+  hud.setScope(false);
   extractProgress = 0;
   elapsed = 0;
   cancelCrack(false);
   lootMgr.reset(); // 每局重新随机布置所有物资箱与加密保险箱（全部关闭）
+  player.loreFound = 0;
+  hud.setLore(0, lootMgr.loreTotal);
+  const bf = MAP_BRIEF[mapId] || MAP_BRIEF.prison;
+  hud.showBriefing(bf.code, MAPS[mapId].name, bf.text);
   hud.setLoot([]);
   hud.extractBanner(false);
   hud.toast(`行动开始 — 目标地图：${MAPS[mapId].name}`, 2600);
@@ -249,6 +359,7 @@ function startGame(touchMode, mapId = 'prison') {
   for (const e of enemyMgr.enemies) scene.remove(e.mesh);
   enemyMgr.enemies = [];
   enemyMgr.spawnAll(10);
+  events.reset(player.pos, force); // 随机事件抽签（须在敌人重置之后，事件守卫才不会被清掉）
 }
 
 // 站位探测：某点在给定脚部高度下是否可站（供台阶攀登判定）
@@ -342,7 +453,7 @@ function endGame(win) {
   document.getElementById('end-result').className = 'result ' + (win ? 'win' : 'lose');
   document.getElementById('end-stats').innerHTML =
     `带走物资价值 <b>¥${total.toLocaleString()}</b>　·　击倒看守 <b>${player.kills}</b> 人<br>` +
-    `存活时间 <b>${mins}分${secs.toString().padStart(2, '0')}秒</b>` +
+    `情报档案 <b>${player.loreFound || 0}/${lootMgr.loreTotal}</b>　·　存活时间 <b>${mins}分${secs.toString().padStart(2, '0')}秒</b>` +
     (win ? '<br><span style="color:#6affb0">直升机已接应，干得漂亮。</span>'
          : '<br><span style="color:#ff8a7a">搜刮到的物资全部遗落在监狱中…</span>');
   hud.el.hud.style.display = 'none';
@@ -379,14 +490,40 @@ document.getElementById('btn-restart').addEventListener('click', () => {
 // ================= 主循环 =================
 let lastStepTime = 0;
 function updateFrame(dt, t) {
-  world.update(t);
-  lootMgr.update(t);
-  weapon.update(dt);
+    world.update(t);
+    lootMgr.update(t);
+    weapon.update(dt);
+    if (weapon !== rifle) rifle.update(dt); else sniper.update(dt);
 
   // 特效衰减
   for (let i = hitVfx.length - 1; i >= 0; i--) {
     hitVfx[i].life -= dt;
+    if (hitVfx[i].fade) hitVfx[i].mesh.material.opacity = Math.min(0.85, hitVfx[i].life / 6 * 0.85);
     if (hitVfx[i].life <= 0) { scene.remove(hitVfx[i].mesh); hitVfx.splice(i, 1); }
+  }
+  // 血雾/尘埃粒子
+  for (const p of puffPool) {
+    if (p.life <= 0) continue;
+    p.life -= dt;
+    p.vel.y -= 9 * dt;
+    p.mesh.position.addScaledVector(p.vel, dt);
+    p.mesh.material.opacity = Math.max(0, p.life * 2.6);
+    if (p.life <= 0) p.mesh.visible = false;
+  }
+  hud.tickDamageDir(dt);
+
+  // 动态分辨率：每 2 秒按实测帧率调整渲染精度
+  fpsAcc += dt; fpsCount++;
+  if (fpsAcc >= 2) {
+    const fps = fpsCount / fpsAcc;
+    if (fps < 42 && curPR > 0.8) {
+      curPR = Math.max(0.8, curPR - 0.25);
+      renderer.setPixelRatio(curPR); composer.setPixelRatio(curPR);
+    } else if (fps > 57 && curPR < maxPR) {
+      curPR = Math.min(maxPR, curPR + 0.25);
+      renderer.setPixelRatio(curPR); composer.setPixelRatio(curPR);
+    }
+    fpsAcc = 0; fpsCount = 0;
   }
 
   if (gameState === 'playing') {
@@ -402,6 +539,28 @@ function updateFrame(dt, t) {
       inp.mx = 0; inp.mz = 0; inp.sprint = false;
       inp.jump = false; inp.fire = false; inp.reload = false; inp.use = false;
     }
+
+    // ---- 切枪（Q / 触屏切枪按钮）----
+    if (!crack.active && inp.swap) {
+      const next = weapon === rifle ? (sniper.owned ? sniper : null) : rifle;
+      if (next) {
+        weapon.reloading = false;
+        weapon = next;
+        if (weapon === rifle) controls.scopeHeld = false;
+        hud.setGun(weapon.name);
+        hud.toast(weapon === sniper ? '已切换 M700 狙击枪 — 右键/开镜键瞄准' : '已切换 AS VAL 突击步枪', 1500);
+        beep(520, 0.06);
+      } else {
+        hud.toast('尚未获得狙击枪 — 搜刮物资箱获取', 1600);
+      }
+    }
+
+    // ---- 开镜状态（仅狙击枪）----
+    const scopedNow = weapon === sniper && weapon.owned && controls.scopeHeld && !weapon.reloading;
+    controls.sensScale = scopedNow ? 0.32 : 1;
+    rifle.viewmodel.visible = weapon === rifle;
+    sniper.viewmodel.visible = weapon === sniper && !scopedNow;
+    hud.setScope(scopedNow);
 
     // ---- 玩家移动 ----
     player.crouching = inp.crouch;
@@ -433,8 +592,8 @@ function updateFrame(dt, t) {
       player.pos.y = ground;
     }
 
-    // 疾跑视野拉伸（增强速度感）
-    const targetFov = (inp.sprint && player.moving && !player.crouching) ? 82 : 75;
+    // 疾跑/开镜视野变化（开镜大幅变焦）
+    const targetFov = scopedNow ? 20 : ((inp.sprint && player.moving && !player.crouching) ? 82 : 75);
     if (Math.abs(camera.fov - targetFov) > 0.05) {
       camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 7);
       camera.updateProjectionMatrix();
@@ -478,20 +637,31 @@ function updateFrame(dt, t) {
 
     // ---- 敌人 ----
     for (const e of enemyMgr.enemies) e.update(dt, t, player, enemyCallbacks);
+    events.update(dt, player);
 
-    // ---- 搜刮交互 ----
+    // ---- 搜刮 / 破解 / 档案交互 ----
     const crate = lootMgr.nearestOpenable(player.pos);
     const safe = crack.active ? null : lootMgr.nearestSafe(player.pos);
+    const lore = lootMgr.nearestLore(player.pos);
     if (crate) {
-      hud.interactTip((controls.touchMode ? '点击【互动】' : '按 <b>E</b>') + ` 搜刮物资箱`);
+      hud.interactTip((controls.touchMode ? '点击【互动】' : '按 <b>E</b>') + ` 搜刮${crate.special ? '空投' : ''}物资箱`);
       if (inp.use) {
-        const msgs = lootMgr.open(crate, player, weapon);
+        const msgs = lootMgr.open(crate, player, weapon, sniper);
         hud.toast('获得：' + msgs.join('、'));
         hud.setLoot(player.loot);
       }
     } else if (safe) {
       hud.interactTip((controls.touchMode ? '点击【互动】' : '按 <b>E</b>') + ` 破解加密保险箱（高价值）`);
       if (inp.use) startCrack(safe);
+    } else if (lore) {
+      hud.interactTip((controls.touchMode ? '点击【互动】' : '按 <b>E</b>') + ` 拾取情报档案`);
+      if (inp.use) {
+        const text = lootMgr.pickLore(lore);
+        player.loreFound++;
+        hud.setLore(player.loreFound, lootMgr.loreTotal);
+        hud.toast(text, 5200);
+        beep(880, 0.12);
+      }
     } else {
       hud.interactTip(null);
     }
@@ -512,7 +682,7 @@ function updateFrame(dt, t) {
 
     hud.setHealth(player.hp, player.armor);
     hud.setAmmo(weapon.mag, weapon.reserve);
-    hud.drawMinimap(player, enemyMgr.enemies, world, dEx, lootMgr.safes);
+    hud.drawMinimap(player, enemyMgr.enemies, world, dEx, lootMgr.safes, events.getMarkers());
   }
 
   composer.render();
@@ -527,7 +697,7 @@ function tick() {
 const clock = new THREE.Clock();
 
 // 调试 / 自动化测试句柄
-window.__game = { player, controls, weapon, enemyMgr, lootMgr, world, scene, camera, startGame, endGame, gameState: () => gameState, crack, tryLock, cancelCrack, buildMap, updateFrame };
+window.__game = { player, controls, weapon: null, rifle, sniper, getWeapon: () => weapon, enemyMgr, lootMgr, world, scene, camera, startGame, endGame, gameState: () => gameState, crack, tryLock, cancelCrack, buildMap, updateFrame };
 buildMap('prison'); // 启动即构建监狱地图（作为菜单背景与默认地图）
 
 // 隐藏 loading

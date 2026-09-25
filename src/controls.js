@@ -6,11 +6,14 @@ export class Controls {
     this.keys = {};
     this.yaw = 0; this.pitch = 0;
     this.sensitivity = 0.0023;
+    this.sensScale = 1;               // 开镜时缩小视角灵敏度
     this.move = { x: 0, z: 0 };        // 归一化移动输入
     this.sprint = false;
     this.jumpQueued = false;
     this.crouch = false;
     this.fireHeld = false;
+    this.scopeHeld = false;           // 右键/开镜按钮
+    this.switchQueued = false;        // Q / 切枪按钮
     this.reloadQueued = false;
     this.useQueued = false;
     this.touchMode = false;
@@ -29,6 +32,7 @@ export class Controls {
       this.keys[e.code] = true;
       if (e.code === 'KeyR') this.reloadQueued = true;
       if (e.code === 'KeyE' || e.code === 'KeyF') this.useQueued = true;
+      if (e.code === 'KeyQ') this.switchQueued = true;
       if (e.code === 'Space') { this.jumpQueued = true; e.preventDefault(); }
       if (e.code === 'KeyC') this.crouch = !this.crouch;
     });
@@ -51,9 +55,11 @@ export class Controls {
     });
     document.addEventListener('mousedown', (e) => {
       if (this.pointerLocked && e.button === 0) this.fireHeld = true;
+      if (this.pointerLocked && e.button === 2) this.scopeHeld = true;
     });
     document.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.fireHeld = false;
+      if (e.button === 2) this.scopeHeld = false;
     });
     document.addEventListener('contextmenu', (e) => e.preventDefault());
   }
@@ -136,6 +142,8 @@ export class Controls {
     bindHold('t-crouch', () => { this.crouch = !this.crouch; });
     bindHold('t-reload', () => { this.reloadQueued = true; });
     bindHold('t-use', () => { this.useQueued = true; });
+    bindHold('t-swap', () => { this.switchQueued = true; });
+    bindHold('t-scope', () => { this.scopeHeld = !this.scopeHeld; }); // 触屏无右键，点按切换开镜
   }
 
   enableTouch(on) {
@@ -157,14 +165,15 @@ export class Controls {
     if (len > 1) { mx /= len; mz /= len; }
     const out = { mx, mz, sprint: this.sprint };
 
-    this.yaw -= this.lookDelta.x * this.sensitivity;
-    this.pitch -= this.lookDelta.y * this.sensitivity;
+    this.yaw -= this.lookDelta.x * this.sensitivity * this.sensScale;
+    this.pitch -= this.lookDelta.y * this.sensitivity * this.sensScale;
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch));
     this.lookDelta.x = 0; this.lookDelta.y = 0;
 
     const j = this.jumpQueued; this.jumpQueued = false;
     const r = this.reloadQueued; this.reloadQueued = false;
     const u = this.useQueued; this.useQueued = false;
-    return { ...out, jump: j, reload: r, use: u, fire: this.fireHeld, crouch: this.crouch };
+    const sw = this.switchQueued; this.switchQueued = false;
+    return { ...out, jump: j, reload: r, use: u, swap: sw, fire: this.fireHeld, crouch: this.crouch };
   }
 }

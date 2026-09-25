@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { moveWithCollisions, groundHeight, hasLineOfSight } from './world.js';
 
-// 武装看守 AI：巡逻 → 察觉 → 交战；血量/掩体/走位简化处理
+// 武装看守 AI：巡逻 → 察觉 → 交战；铰接动画（髋/肩枢轴摆动、举枪、起伏、踉跄、倒地）
 const IDLE = 0, PATROL = 1, COMBAT = 2, DEAD = 3;
 
 export class Enemy {
@@ -20,9 +20,12 @@ export class Enemy {
     this.fireTimer = Math.random() * 2;
     this.burst = 0;
     this.deadTime = 0;
+    this.deathRoll = (Math.random() - 0.5) * 0.7;
     this.walkPhase = Math.random() * 10;
     this.stepTimer = 0;
     this.radius = 0.4;
+    this.flinch = 0;      // 受击踉跄计时
+    this.aimBlend = 0;    // 举枪姿态混合
 
     // 巡逻路线
     const pts = world.patrolPoints;
@@ -50,18 +53,36 @@ export class Enemy {
     this.helmet = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 8, 0, Math.PI * 2, 0, Math.PI / 1.8), vest);
     this.helmet.position.y = 1.74;
 
-    this.legL = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.55, 4, 8), cloth);
-    this.legR = this.legL.clone();
-    this.legL.position.set(-0.15, 0.42, 0);
-    this.legR.position.set(0.15, 0.42, 0);
+    // 髋部枢轴（腿部绕髋摆动）
+    const legGeo = new THREE.CapsuleGeometry(0.11, 0.55, 4, 8);
+    this.hipL = new THREE.Group();
+    this.hipL.position.set(-0.15, 0.78, 0);
+    const legL = new THREE.Mesh(legGeo, cloth);
+    legL.position.y = -0.39;
+    this.hipL.add(legL);
+    this.hipR = new THREE.Group();
+    this.hipR.position.set(0.15, 0.78, 0);
+    const legR = new THREE.Mesh(legGeo, cloth);
+    legR.position.y = -0.39;
+    this.hipR.add(legR);
 
-    this.armR = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.45, 4, 8), cloth);
-    this.armR.position.set(0.36, 1.25, 0.12);
-    this.armL = this.armR.clone();
-    this.armL.position.set(-0.36, 1.25, 0.12);
+    // 肩部枢轴（手臂绕肩摆动 / 举枪）
+    const armGeo = new THREE.CapsuleGeometry(0.09, 0.45, 4, 8);
+    this.shL = new THREE.Group();
+    this.shL.position.set(-0.36, 1.42, 0);
+    const armL = new THREE.Mesh(armGeo, cloth);
+    armL.position.y = -0.31;
+    this.shL.add(armL);
+    this.shR = new THREE.Group();
+    this.shR.position.set(0.36, 1.42, 0);
+    const armR = new THREE.Mesh(armGeo, cloth);
+    armR.position.y = -0.31;
+    this.shR.add(armR);
 
     this.gun = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.7), gunM);
     this.gun.position.set(0.22, 1.28, 0.42);
+    this.gunHip = { pos: new THREE.Vector3(0.22, 1.28, 0.42), rotX: 0 };
+    this.gunAim = { pos: new THREE.Vector3(0.14, 1.42, 0.52), rotX: -0.06 };
 
     // 红色识别灯（远处可见，便于玩家辨识）
     this.tag = new THREE.Mesh(
@@ -70,10 +91,15 @@ export class Enemy {
     );
     this.tag.position.set(0, 2.05, 0);
 
-    for (const m of [this.body, this.vest, this.head, this.helmet, this.legL, this.legR, this.armR, this.armL, this.gun]) {
+    for (const m of [this.body, this.vest, this.head, this.helmet]) {
       m.castShadow = true;
       g.add(m);
     }
+    for (const p of [this.hipL, this.hipR, this.shL, this.shR]) {
+      p.traverse(m => { m.castShadow = true; });
+      g.add(p);
+    }
+    g.add(this.gun);
     g.add(this.tag);
     g.position.copy(this.pos);
     this.scene.add(g);
@@ -85,7 +111,7 @@ export class Enemy {
   hitBy(dmg, isHead) {
     if (this.state === DEAD) return false;
     this.hp -= isHead ? dmg * 2.2 : dmg;
-    // 受击进入交战
+    this.flinch = 0.2; // 受击踉跄
     if (this.state !== COMBAT) { this.state = COMBAT; this.alertTo(this.playerPos || this.pos); }
     if (this.hp <= 0) {
       this.state = DEAD;
@@ -107,9 +133,11 @@ export class Enemy {
 
     if (this.state === DEAD) {
       this.deadTime += dt;
-      if (this.deadTime < 0.5) {
-        this.mesh.rotation.x = -this.deadTime * 2.6; // 倒地
-      }
+      const p = Math.min(1, this.deadTime / 0.45);
+      // 倒地：绕脚部前倾倒下 + 随机侧倾
+      this.mesh.rotation.x = -1.5 * p * p;
+      this.mesh.rotation.z = this.deathRoll * p;
+      this.mesh.position.y = this.pos.y + 0.28 * Math.sin(Math.PI * Math.min(1, p * 1.15));
       this.tag.visible = false;
       return;
     }
@@ -118,10 +146,10 @@ export class Enemy {
     const playerEye = new THREE.Vector3(player.pos.x, player.pos.y + player.eyeHeight, player.pos.z);
     const toPlayer = new THREE.Vector3().subVectors(playerEye, eye);
     const dist = toPlayer.length();
-    const facing = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-    const flatDot = facing.dot(new THREE.Vector3(toPlayer.x, 0, toPlayer.z).normalize());
 
     // 感知：视距 + 视野角（交战时全向），蹲伏/移动影响察觉距离
+    const facing = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+    const flatDot = facing.dot(new THREE.Vector3(toPlayer.x, 0, toPlayer.z).normalize());
     const seeRange = player.crouching ? 26 : (player.moving ? 40 : 32);
     this.seePlayer = dist < seeRange &&
       (this.state === COMBAT || flatDot > 0.15 || dist < 6) &&
@@ -196,11 +224,29 @@ export class Enemy {
       }
     }
 
-    // 动画
-    const swing = moveDir ? Math.sin(this.walkPhase) * 0.55 : 0;
-    this.legL.rotation.x = swing;
-    this.legR.rotation.x = -swing;
-    this.mesh.position.set(this.pos.x, this.pos.y, this.pos.z);
+    // ---- 铰接动画 ----
+    this.aimBlend += ((this.state === COMBAT ? 1 : 0) - this.aimBlend) * Math.min(1, dt * 6);
+    const moving = !!moveDir;
+    const swing = moving ? Math.sin(this.walkPhase) * 0.55 : 0;
+    this.hipL.rotation.x = swing;
+    this.hipR.rotation.x = -swing;
+    // 手臂：巡逻摆臂；交战举枪指向目标
+    this.shL.rotation.x = -swing * 0.6 - this.aimBlend * 1.25;
+    this.shR.rotation.x = swing * 0.6 - this.aimBlend * 1.25;
+    // 枪：髋部持握 ↔ 举枪瞄准
+    this.gun.position.lerpVectors(this.gunHip.pos, this.gunAim.pos, this.aimBlend);
+    this.gun.rotation.x = this.gunHip.rotX + (this.gunAim.rotX - this.gunHip.rotX) * this.aimBlend;
+    // 起伏与跑动前倾
+    const bob = moving ? Math.abs(Math.sin(this.walkPhase)) * 0.05 : 0;
+    this.mesh.position.set(this.pos.x, this.pos.y + bob, this.pos.z);
+    this.mesh.rotation.x = moving && speed > 2.6 ? 0.08 : 0;
+    // 受击踉跄
+    if (this.flinch > 0) {
+      this.flinch -= dt;
+      this.mesh.rotation.z = Math.sin(this.flinch * 45) * 0.14 * (this.flinch / 0.2);
+    } else {
+      this.mesh.rotation.z = 0;
+    }
     this.mesh.rotation.y = this.yaw;
   }
 }
@@ -227,6 +273,18 @@ export class EnemyManager {
     for (const p of chosen) {
       this.enemies.push(new Enemy(this.scene, this.world, p.clone()));
     }
+  }
+
+  // 运行时增援/事件投放
+  spawnAt(x, z, opts = {}) {
+    const e = new Enemy(this.scene, this.world, new THREE.Vector3(x, 0, z));
+    if (opts.hunt && opts.target) {
+      e.state = 2; // COMBAT：径直向玩家最后位置移动
+      e.lastSeen.copy(opts.target);
+      e.lastSeenTime = opts.t || 0;
+    }
+    this.enemies.push(e);
+    return e;
   }
 
   alive() { return this.enemies.filter(e => e.state !== 3).length; }
