@@ -55,11 +55,11 @@ export class Controls {
     });
     document.addEventListener('mousedown', (e) => {
       if (this.pointerLocked && e.button === 0) this.fireHeld = true;
-      if (this.pointerLocked && e.button === 2) this.scopeHeld = true;
+      // 右键点击切换开镜（一次开启、再次关闭）
+      if (this.pointerLocked && e.button === 2) this.scopeHeld = !this.scopeHeld;
     });
     document.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.fireHeld = false;
-      if (e.button === 2) this.scopeHeld = false;
     });
     document.addEventListener('contextmenu', (e) => e.preventDefault());
   }
