@@ -78,7 +78,7 @@ const sniper = new Weapon(camera, scene, {
   spreadBase: 0.03, reloadTime: 2.8
 });
 sniper.viewmodel.visible = false;
-sniper.owned = false; // 狙击枪需从宝箱获取
+sniper.owned = true; // 狙击枪为初始标配武器
 let weapon = rifle;   // 当前手持武器
 scene.add(camera);
 
@@ -335,9 +335,9 @@ function startGame(touchMode, mapId = 'prison', force = {}) {
   const ep = world.extractPoints[Math.floor(Math.random() * world.extractPoints.length)];
   world.extractPoint.copy(ep);
   lootMgr.setExtractPoint(ep);
-  // 武器重置：每局仅携带 AS VAL，狙击枪需重新从宝箱获取
+  // 武器重置：初始标配 AS VAL + M700（弹匣内 5 发狙击弹，补充靠宝箱）
   rifle.mag = rifle.magSize; rifle.reserve = 120; rifle.recoil = 0; rifle.reloading = false;
-  sniper.owned = false; sniper.mag = 0; sniper.reserve = 0; sniper.recoil = 0; sniper.reloading = false;
+  sniper.owned = true; sniper.mag = 5; sniper.reserve = 0; sniper.recoil = 0; sniper.reloading = false;
   sniper.viewmodel.visible = false;
   weapon = rifle;
   controls.scopeHeld = false;

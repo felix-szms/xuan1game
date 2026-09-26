@@ -7,12 +7,12 @@ const ITEM_TABLE = [
   { name: '机械零件', value: 1200, w: 24 },
   { name: '军用绷带', value: 800, w: 18 },
   { name: '弹药盒', value: 600, w: 16, ammo: 60 },
+  // 狙击枪为初始标配，宝箱提供狙击弹补充
+  { name: '狙击弹', value: 1500, w: 10, sniperAmmo: 5 },
   { name: '加密门卡', value: 3000, w: 12 },
   { name: '军用硬盘', value: 5000, w: 8 },
   { name: '金条', value: 8000, w: 4 },
-  { name: '红酒收藏款', value: 2400, w: 11 },
-  // 狙击枪：只能通过宝箱获取（含 10 发弹），后续拾取转化为狙击弹
-  { name: 'M700 狙击枪', value: 9000, w: 9, sniper: true }
+  { name: '红酒收藏款', value: 2400, w: 8 }
 ];
 
 // 加密保险箱专属高价值物资
@@ -355,16 +355,11 @@ export class LootManager {
     crate.opened = true;
     const msgs = [];
     for (const it of crate.items) {
-      if (it.sniper) {
-        if (sniper && !sniper.owned) {
-          sniper.owned = true;
-          sniper.mag = sniper.magSize; // 含 10 发弹（弹匣全满）
-          sniper.reserve = 0;
-          sniper.reloading = false;
-          msgs.push('M700 狙击枪 ×1（含 10 发狙击弹，按 Q 切换）');
-        } else if (sniper) {
-          sniper.reserve += 5;
-          msgs.push('狙击弹 ×5');
+      if (it.sniperAmmo) {
+        // 狙击弹补给
+        if (sniper) {
+          sniper.reserve += it.sniperAmmo;
+          msgs.push(`狙击弹 ×${it.sniperAmmo}`);
         }
       } else if (it.ammo) {
         // 弹药盒补给当前手持武器（狙击枪按 10 发/盒折算）
