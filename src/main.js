@@ -10,8 +10,9 @@ import { Weapon } from './weapons.js';
 import { EnemyManager } from './enemies.js';
 import { LootManager } from './loot.js';
 import { HUD } from './hud.js';
-import { initAudio, shotSound, sniperShotSound, enemyShotSound, hitSound, reloadSound, hurtSound, beep, footstep } from './audio.js';
+import { initAudio, shotSound, sniperShotSound, enemyShotSound, hitSound, reloadSound, hurtSound, beep, footstep, thunderSound, birdChirp } from './audio.js';
 import { RandomEvents } from './events.js';
+import { Insertion } from './insertion.js';
 
 // ================= 渲染器 / 场景 =================
 const app = document.getElementById('app');
@@ -80,6 +81,12 @@ const sniper = new Weapon(camera, scene, {
 sniper.viewmodel.visible = false;
 sniper.owned = true; // 狙击枪为初始标配武器
 let weapon = rifle;   // 当前手持武器
+const insertion = new Insertion(scene, camera);
+// 索降跳过：任意键 / 点击
+window.addEventListener('keydown', () => { if (gameState === 'insertion') insertion.skip(); });
+window.addEventListener('pointerdown', () => { if (gameState === 'insertion') insertion.skip(); });
+// 丛林环境音效计时器（雷声/鸟鸣）
+let thunderTimer = 10, birdTimer = 4;
 scene.add(camera);
 
 // 按地图构建世界（切换地图或首次进入时调用）
@@ -310,6 +317,10 @@ const MAP_BRIEF = {
   dam: {
     code: '行动代号 X-9 · 绝密',
     text: '零号大坝战后被武装看守盘踞，坝顶机房里封存着战前的机密货物。情报显示“渡鸦”已经入境，交易随时可能发生。注意：撤离点每日更换，出发前确认小地图上的绿色标记。潜入、搜刮、抢在所有人之前撤离。'
+  },
+  jungle: {
+    code: '行动代号 X-13 · 绝密',
+    text: '侦察部队在一周前失联，最后一条讯息来自河谷研究站：“我们不是这里唯一的主人。”你将从直升机索降进入雨林，找回研究站封存的资料物资。雨会掩盖脚步声，也会掩盖他们的。三个撤离点：码头、山脊机坪、公路检查站。'
   }
 };
 
@@ -347,8 +358,6 @@ function startGame(touchMode, mapId = 'prison', force = {}) {
   elapsed = 0;
   cancelCrack(false);
   lootMgr.reset(); // 每局重新随机布置所有物资箱与加密保险箱（全部关闭）
-  player.loreFound = 0;
-  hud.setLore(0, lootMgr.loreTotal);
   const bf = MAP_BRIEF[mapId] || MAP_BRIEF.prison;
   hud.showBriefing(bf.code, MAPS[mapId].name, bf.text);
   hud.setLoot([]);
@@ -358,8 +367,15 @@ function startGame(touchMode, mapId = 'prison', force = {}) {
   // 重置敌人
   for (const e of enemyMgr.enemies) scene.remove(e.mesh);
   enemyMgr.enemies = [];
-  enemyMgr.spawnAll(10);
+  enemyMgr.spawnAll(world.enemyCount || 10);
   events.reset(player.pos, force); // 随机事件抽签（须在敌人重置之后，事件守卫才不会被清掉）
+
+  // 丛林图：直升机索降过场（结束后才交出控制权并显示 HUD）
+  if (mapId === 'jungle') {
+    gameState = 'insertion';
+    hud.el.hud.style.display = 'none';
+    insertion.start(sp);
+  }
 }
 
 // 站位探测：某点在给定脚部高度下是否可站（供台阶攀登判定）
@@ -453,7 +469,7 @@ function endGame(win) {
   document.getElementById('end-result').className = 'result ' + (win ? 'win' : 'lose');
   document.getElementById('end-stats').innerHTML =
     `带走物资价值 <b>¥${total.toLocaleString()}</b>　·　击倒看守 <b>${player.kills}</b> 人<br>` +
-    `情报档案 <b>${player.loreFound || 0}/${lootMgr.loreTotal}</b>　·　存活时间 <b>${mins}分${secs.toString().padStart(2, '0')}秒</b>` +
+    `存活时间 <b>${mins}分${secs.toString().padStart(2, '0')}秒</b>` +
     (win ? '<br><span style="color:#6affb0">直升机已接应，干得漂亮。</span>'
          : '<br><span style="color:#ff8a7a">搜刮到的物资全部遗落在监狱中…</span>');
   hud.el.hud.style.display = 'none';
@@ -474,9 +490,9 @@ document.getElementById('btn-back').addEventListener('click', () => {
   document.getElementById('map-menu').style.display = 'none';
   menuEl.style.display = 'flex';
 });
-for (const id of ['map-prison', 'map-dam']) {
+for (const id of ['map-prison', 'map-dam', 'map-jungle']) {
   document.getElementById(id).addEventListener('click', () => {
-    const mapId = id === 'map-dam' ? 'dam' : 'prison';
+    const mapId = id.replace('map-', '');
     if (currentMapId !== mapId) buildMap(mapId);
     startGame(chosenMode === 'pad', mapId);
   });
@@ -490,10 +506,21 @@ document.getElementById('btn-restart').addEventListener('click', () => {
 // ================= 主循环 =================
 let lastStepTime = 0;
 function updateFrame(dt, t) {
-    world.update(t);
+    world.update(t, dt, gameState === 'playing' ? player.pos : camera.position);
     lootMgr.update(t);
     weapon.update(dt);
     if (weapon !== rifle) rifle.update(dt); else sniper.update(dt);
+
+  // 索降过场：相机由时间线驱动，结束后交还控制权
+  if (gameState === 'insertion') {
+    if (insertion.update(dt, controls.yaw)) {
+      gameState = 'playing';
+      hud.show();
+      hud.toast('已着陆 — 开始行动', 2000);
+    }
+    composer.render();
+    return;
+  }
 
   // 特效衰减
   for (let i = hitVfx.length - 1; i >= 0; i--) {
@@ -567,7 +594,9 @@ function updateFrame(dt, t) {
     const targetEye = player.crouching ? 1.05 : 1.62;
     player.eyeHeight += (targetEye - player.eyeHeight) * Math.min(1, dt * 10);
 
-    const speed = player.crouching ? 2.1 : (inp.sprint ? 7.0 : 4.2);
+    // 溪流涉水减速 20%
+    const wading = world.stream && player.pos.x > world.stream.x1 && player.pos.x < world.stream.x2 && player.pos.y < 0.3;
+    const speed = (player.crouching ? 2.1 : (inp.sprint ? 7.0 : 4.2)) * (wading ? 0.8 : 1);
     const sin = Math.sin(controls.yaw), cos = Math.cos(controls.yaw);
     // 相机前方向 = (-sin yaw, -cos yaw)，右方向 = (cos yaw, -sin yaw)
     // W 为 mz=-1：v = mx*右 + (-mz)*前
@@ -635,6 +664,14 @@ function updateFrame(dt, t) {
     if (inp.reload) { if (weapon.startReload()) reloadSound(); }
     if (inp.fire) playerFire();
 
+    // ---- 丛林环境音效（雷声/鸟鸣）----
+    if (world.mapId === 'jungle') {
+      thunderTimer -= dt;
+      if (thunderTimer <= 0) { thunderSound(); thunderTimer = 16 + Math.random() * 20; }
+      birdTimer -= dt;
+      if (birdTimer <= 0) { birdChirp(); birdTimer = 2.5 + Math.random() * 5; }
+    }
+
     // ---- 敌人 ----
     for (const e of enemyMgr.enemies) e.update(dt, t, player, enemyCallbacks);
     events.update(dt, player);
@@ -642,7 +679,6 @@ function updateFrame(dt, t) {
     // ---- 搜刮 / 破解 / 档案交互 ----
     const crate = lootMgr.nearestOpenable(player.pos);
     const safe = crack.active ? null : lootMgr.nearestSafe(player.pos);
-    const lore = lootMgr.nearestLore(player.pos);
     if (crate) {
       hud.interactTip((controls.touchMode ? '点击【互动】' : '按 <b>E</b>') + ` 搜刮${crate.special ? '空投' : ''}物资箱`);
       if (inp.use) {
@@ -653,15 +689,6 @@ function updateFrame(dt, t) {
     } else if (safe) {
       hud.interactTip((controls.touchMode ? '点击【互动】' : '按 <b>E</b>') + ` 破解加密保险箱（高价值）`);
       if (inp.use) startCrack(safe);
-    } else if (lore) {
-      hud.interactTip((controls.touchMode ? '点击【互动】' : '按 <b>E</b>') + ` 拾取情报档案`);
-      if (inp.use) {
-        const text = lootMgr.pickLore(lore);
-        player.loreFound++;
-        hud.setLore(player.loreFound, lootMgr.loreTotal);
-        hud.toast(text, 5200);
-        beep(880, 0.12);
-      }
     } else {
       hud.interactTip(null);
     }

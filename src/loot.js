@@ -62,7 +62,34 @@ const MAP_LOOT = {
       [-58, 12], [-54, 8], [-62, 16], [-51, 15]
     ],
     safeSpawns: [[34, -12], [42, -8], [0, -52], [20, -50, 12.6], [-56, 8]]
+  },
+  jungle: {
+    spawns: [
+      // 研究站主楼与辅楼
+      [46, -44], [58, -44], [46, -38], [58, -38], [52, -46], [50, -60], [55, -64], [46, -62],
+      // 古庙遗迹（台基 y=1）
+      [6, 58, 1], [14, 58, 1], [10, 66, 1], [4, 66, 1], [16, 64, 1], [10, 58, 1],
+      // 树屋（平台顶 y≈5.3）
+      [-52, 22, 5.32], [-38, 30, 5.32], [-46, 42, 5.32], [-26, 18, 5.32],
+      // 伐木场
+      [-62, -16], [-58, -20], [-66, -20], [-54, -14], [-52, -22],
+      // 码头/溪畔
+      [30, 92], [22, 88], [38, 86],
+      // 直升机坪（y≈6.26）
+      [-72, -72, 6.26],
+      // 散布
+      [8, 20], [-10, 40], [60, 30], [80, 10], [-80, 30], [0, -20], [-20, -40],
+      [40, -10], [70, 50], [-40, 60], [90, -40], [-90, -20], [20, -60], [-30, 90]
+    ],
+    safeSpawns: [[52, -46, 0], [58, -40, 0], [10, 62, 1], [-46, 42, 5.32]]
   }
+};
+
+// 每图物资数量（丛林大图更多）
+const MAP_COUNTS = {
+  prison: { crates: 14, safes: 2 },
+  dam:    { crates: 14, safes: 2 },
+  jungle: { crates: 18, safes: 3 }
 };
 
 function rollItem() {
@@ -79,28 +106,6 @@ function rollSafeItem() {
   return SAFE_TABLE[Math.floor(Math.random() * SAFE_TABLE.length)];
 }
 export { rollSafeItem };
-
-// 每张地图的情报档案（环境叙事收集品，固定点位）
-const MAP_LORE = {
-  prison: {
-    points: [[-30, -24], [-52, 20], [0, 11], [10, 52]],
-    texts: [
-      '【监狱长日志·一】潮位上涨的第七天，柴油发电机停了。我们决定把重犯转移到坝区——如果直升机还能来的话。',
-      '【守卫录音带】……东墙外的水已经淹到哨塔二层。指挥部没有回电。重复，指挥部没有回电。',
-      '【墙上的刻字】放风场的水泥墙上，有人反复刻下同一句话：“潮水会带走一切，除了罪。”',
-      '【监狱长日志·末】保险箱的密码是撤离那天的日期。如果有人读到这本日志——别开箱，那是我留给死人的。'
-    ]
-  },
-  dam: {
-    points: [[31, -4], [0, -47], [-60, -2], [46, -23.5]],
-    texts: [
-      '【工程师笔记】大坝的承重远超设计值。战争开始之后，他们往坝顶机房里塞满了不该放的东西。',
-      '【巡逻队记录】03:00，北岸探照灯又灭了。对岸有灯语闪烁——不是我们的频率。',
-      '【值班室交接簿】燃料库今晚起只留两人。其余人向行政辖区集结，带不走的设备就地封存。',
-      '【加密电报残页】“渡鸦”已入境，货在坝顶。撤离点每日更换——盯死绿色信号烟。'
-    ]
-  }
-};
 
 export class LootManager {
   constructor(scene, world) {
@@ -124,7 +129,6 @@ export class LootManager {
       [-48, -41], [-30, -41], [-12, -41], [28, -44], [44, -36], [-36, 33]
     ];
     this._spawnAll();
-    this._spawnLore();
     this._buildExtractMarker();
   }
 
@@ -181,7 +185,6 @@ export class LootManager {
     this.crates.length = 0;
     this.safes.length = 0;
     this._spawnAll();
-    this._spawnLore();
   }
 
   // 刷新点校验：与同一高度层的碰撞体保持间距，避免箱子嵌进墙/集装箱
@@ -196,55 +199,11 @@ export class LootManager {
 
   _spawnAll() {
     const cfg = MAP_LOOT[this.world.mapId] || MAP_LOOT.prison;
+    const cnt = MAP_COUNTS[this.world.mapId] || MAP_COUNTS.prison;
     this.spawns = cfg.spawns;
     this.safeSpawns = cfg.safeSpawns;
-    this._spawnCrates(14);
-    this._spawnSafes(2);
-  }
-
-  // ============ 情报档案（环境叙事收集品） ============
-  _spawnLore() {
-    const cfg = MAP_LORE[this.world.mapId] || MAP_LORE.prison;
-    this.loreItems = [];
-    this.loreTotal = cfg.points.length;
-    const paperM = new THREE.MeshStandardMaterial({
-      color: 0xd8e6ef, roughness: 0.6,
-      emissive: 0x00c8ff, emissiveIntensity: 0.55
-    });
-    cfg.points.forEach(([x, z, y = 0], i) => {
-      const g = new THREE.Group();
-      const sheet = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.42, 0.05), paperM);
-      sheet.position.y = 0.21;
-      sheet.rotation.z = 0.1;
-      const clip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.07),
-        new THREE.MeshStandardMaterial({ color: 0x30373c, metalness: 0.8, roughness: 0.3 }));
-      clip.position.y = 0.44;
-      g.add(sheet, clip);
-      g.position.set(x, y, z);
-      g.rotation.y = Math.random() * Math.PI * 2;
-      this.scene.add(g);
-      this.loreItems.push({ group: g, pos: new THREE.Vector3(x, y, z), picked: false, text: cfg.texts[i] });
-    });
-  }
-
-  nearestLore(playerPos) {
-    let best = null, bestD = 2.2;
-    for (const l of this.loreItems || []) {
-      if (l.picked) continue;
-      const d = Math.hypot(l.pos.x - playerPos.x, l.pos.z - playerPos.z);
-      if (d < bestD && Math.abs(l.pos.y - playerPos.y) < 2) { best = l; bestD = d; }
-    }
-    return best;
-  }
-
-  pickLore(lore) {
-    lore.picked = true;
-    this.scene.remove(lore.group);
-    return lore.text;
-  }
-
-  loreFoundCount() {
-    return (this.loreItems || []).filter(l => l.picked).length;
+    this._spawnCrates(cnt.crates);
+    this._spawnSafes(cnt.safes);
   }
 
   _trackCollider(x, y, z, sx, sy, sz) {
@@ -409,12 +368,6 @@ export class LootManager {
       if (s.opened) continue;
       const p = s.group.children[1].material;
       if (p.emissiveIntensity !== undefined) p.emissiveIntensity = 0.6 + Math.sin(t * 3 + s.pos.x) * 0.35;
-    }
-    // 情报档案悬浮旋转
-    for (const l of this.loreItems || []) {
-      if (l.picked) continue;
-      l.group.rotation.y = t * 0.8;
-      l.group.position.y = l.pos.y + 0.08 + Math.sin(t * 2 + l.pos.x) * 0.04;
     }
   }
 }
