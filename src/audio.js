@@ -112,7 +112,113 @@ export function hitSound(kind = 'body', kill = false) {
   }
 }
 
-// 空投：运输机低空掠过（噪声扫频）
+// ============ 丛林/索降音频 ============
+
+let rotorNodes = null;
+export function startRotor() {
+  if (!ctx || rotorNodes) return;
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuffer(1.2);
+  src.loop = true;
+  const f = ctx.createBiquadFilter();
+  f.type = 'lowpass'; f.frequency.value = 380;
+  // 桨叶 chopping 调制（约 13Hz）
+  const lfo = ctx.createOscillator(); lfo.frequency.value = 13;
+  const lg = ctx.createGain(); lg.gain.value = 0.24;
+  const g = ctx.createGain(); g.gain.value = 0.001;
+  g.gain.linearRampToValueAtTime(0.4, ctx.currentTime + 0.5);
+  lfo.connect(lg).connect(g.gain);
+  src.connect(f).connect(g).connect(master);
+  src.start(); lfo.start();
+  rotorNodes = { src, lfo, g };
+}
+
+export function setRotorVolume(v) {
+  if (!rotorNodes) return;
+  rotorNodes.g.gain.linearRampToValueAtTime(Math.max(0.0001, v), ctx.currentTime + 0.4);
+}
+
+export function stopRotor() {
+  if (!rotorNodes) return;
+  const { src, lfo, g } = rotorNodes;
+  g.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + 1.2);
+  setTimeout(() => { try { src.stop(); lfo.stop(); } catch (_) {} }, 1400);
+  rotorNodes = null;
+}
+
+// 索降风噪（强度随下滑速度）
+export function windRush(vol = 0.3) {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuffer(2.4);
+  const f = ctx.createBiquadFilter();
+  f.type = 'bandpass'; f.frequency.setValueAtTime(500, t);
+  f.frequency.linearRampToValueAtTime(1400, t + 1.6);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.linearRampToValueAtTime(vol, t + 1.4);
+  g.gain.linearRampToValueAtTime(0.001, t + 2.3);
+  src.connect(f).connect(g).connect(master);
+  src.start(t);
+}
+
+export function landThud() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const o = ctx.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(120, t);
+  o.frequency.exponentialRampToValueAtTime(40, t + 0.18);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.5, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  o.connect(g).connect(master);
+  o.start(t); o.stop(t + 0.24);
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuffer(0.25);
+  const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 800;
+  const g2 = ctx.createGain();
+  g2.gain.setValueAtTime(0.3, t);
+  g2.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+  src.connect(f).connect(g2).connect(master);
+  src.start(t);
+}
+
+export function thunderSound() {
+  if (!ctx) return;
+  const t = ctx.currentTime + 0.3 + Math.random() * 0.8;
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuffer(2.6);
+  const f = ctx.createBiquadFilter();
+  f.type = 'lowpass';
+  f.frequency.setValueAtTime(400, t);
+  f.frequency.exponentialRampToValueAtTime(60, t + 2.2);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.linearRampToValueAtTime(0.35, t + 0.25);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 2.4);
+  src.connect(f).connect(g).connect(master);
+  src.start(t);
+}
+
+// 丛林鸟鸣（随机双音短哨）
+export function birdChirp() {
+  if (!ctx) return;
+  const base = 1800 + Math.random() * 1800;
+  [0, 0.14].forEach((d, i) => {
+    const t = ctx.currentTime + d;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(base + i * 250, t);
+    o.frequency.exponentialRampToValueAtTime(base * 0.8, t + 0.1);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.03, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+    o.connect(g).connect(master);
+    o.start(t); o.stop(t + 0.14);
+  });
+}
 export function planeFlyby() {
   if (!ctx) return;
   const t = ctx.currentTime;

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { concreteTexture, groundTexture, containerTexture, metalTexture, woodTexture, plasterTexture, contactShadowTexture } from './textures.js';
+import { concreteTexture, groundTexture, containerTexture, metalTexture, woodTexture, plasterTexture, contactShadowTexture, grassTexture } from './textures.js';
 
 // ============================================================
 // 潮汐监狱 地图：几何、碰撞体、巡逻点、小地图数据
@@ -16,13 +16,16 @@ export const MAP_HALF = 78;
 // 地图注册表：名称与描述（开局地图选择界面用）
 export const MAPS = {
   prison: { id: 'prison', name: '潮汐监狱', desc: '夜战 · 监区牢房 / 放风场 / 码头' },
-  dam:    { id: 'dam',    name: '零号大坝', desc: '黄昏 · 坝顶机房 / 泄洪道 / 行政辖区 / 村庄' }
+  dam:    { id: 'dam',    name: '零号大坝', desc: '黄昏 · 坝顶机房 / 泄洪道 / 行政辖区 / 村庄' },
+  jungle: { id: 'jungle', name: '丛林冒险', desc: '雨雾清晨 · 研究站 / 树屋 / 古庙遗迹 / 直升机索降' }
 };
 
 export class World {
   constructor(scene, mapId = 'prison') {
     this.scene = scene;
     this.mapId = MAPS[mapId] ? mapId : 'prison';
+    this.mapHalf = this.mapId === 'jungle' ? 110 : MAP_HALF;
+    this.enemyCount = this.mapId === 'jungle' ? 14 : 10;
     this.colliders = [];        // { min:{x,y,z}, max:{x,y,z} }
     this.solidMeshes = [];
     this.minimapRects = [];     // { x, z, w, d } 俯视图
@@ -34,7 +37,10 @@ export class World {
     this.extractRadius = 7;
     this.waters = [];
     this.lampLights = [];
+    this.stream = null;         // 涉水减速带 { x1, x2 }
+    this.rain = null;
     if (this.mapId === 'dam') this._buildZeroDam();
+    else if (this.mapId === 'jungle') this._buildJungle();
     else this._buildTidePrison();
   }
 
@@ -586,6 +592,358 @@ export class World {
     ];
   }
 
+  // ============================================================
+  // 地图三：丛林冒险（雨雾清晨，220×220 大图，直升机索降）
+  // ============================================================
+  _buildJungle() {
+    const S = this.scene;
+    const H = this.mapHalf; // 110
+
+    // ---------- 材质 ----------
+    const groundM = new THREE.MeshStandardMaterial({ map: groundTexture(512, 40, '#4c5a3c'), roughness: 0.97, color: 0xb8c8a8 });
+    const stoneM = new THREE.MeshStandardMaterial({ map: concreteTexture(512, 5, '#7a8074'), roughness: 0.92, color: 0xb0c0a8 });
+    const mossStone = new THREE.MeshStandardMaterial({ map: concreteTexture(512, 4, '#64705c'), roughness: 0.95, color: 0xa8c0a0 });
+    const wallM = new THREE.MeshStandardMaterial({ map: plasterTexture(512, 4, '#8a9484'), roughness: 0.9, color: 0xc0ccb8 });
+    const woodM = new THREE.MeshStandardMaterial({ map: woodTexture(512, 2, '#5f4a30'), roughness: 0.92 });
+    const steelM = new THREE.MeshStandardMaterial({ map: metalTexture(256, 2, '#4a5650'), roughness: 0.55, metalness: 0.7 });
+    const rustM = new THREE.MeshStandardMaterial({ map: containerTexture('#5f4a33'), roughness: 0.85, metalness: 0.3 });
+    this.mats = { concrete: stoneM, concreteDark: groundM, wallPaint: wallM, rust: rustM, steel: steelM, wood: woodM, red: rustM, blue: steelM, green: mossStone, yellow: woodM };
+    this.shadowTex = contactShadowTexture();
+
+    // ---------- 雨雾清晨光照 ----------
+    S.background = new THREE.Color(0x2a3d33);
+    S.fog = new THREE.Fog(0x2a3d33, 26, 135);
+    S.environmentIntensity = 0.34;
+    this._addSky(0x51705e, 0xa8bfa0, { dir: new THREE.Vector3(70, 55, 20), color: 0xf2ecd0 });
+    S.add(new THREE.HemisphereLight(0x9db8a0, 0x1c281e, 1.05));
+    const sun = new THREE.DirectionalLight(0xfff2cc, 1.45);
+    sun.position.set(70, 80, 20);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -120; sun.shadow.camera.right = 120;
+    sun.shadow.camera.top = 120; sun.shadow.camera.bottom = -120;
+    sun.shadow.camera.far = 300;
+    sun.shadow.bias = -0.0007;
+    S.add(sun);
+
+    // ---------- 地面与岩壁围合 ----------
+    const ground = new THREE.Mesh(new THREE.BoxGeometry(H * 2, 3, H * 2), groundM);
+    ground.position.y = -1.5;
+    ground.receiveShadow = true;
+    S.add(ground);
+    this.addCollider(0, -1.5, 0, H * 2, 3, H * 2);
+    const cliff = new THREE.MeshStandardMaterial({ map: concreteTexture(512, 6, '#5c665a'), roughness: 0.95, color: 0xa8b8a0 });
+    this.box(H * 2, 16, 4, cliff, 0, 0, -H);
+    this.box(H * 2, 16, 4, cliff, 0, 0, H);
+    this.box(4, 16, H * 2, cliff, -H, 0, 0);
+    this.box(4, 16, H * 2, cliff, H, 0, 0);
+
+    // ---------- 中央河谷溪流（x∈[25,35]，贯穿全图） ----------
+    const bed = new THREE.Mesh(new THREE.BoxGeometry(11, 0.12, H * 2),
+      new THREE.MeshStandardMaterial({ color: 0x39443a, roughness: 0.98 }));
+    bed.position.set(30, 0.02, 0);
+    bed.receiveShadow = true;
+    S.add(bed);
+    this._addWater(30, 0, 9.5, H * 2 + 8, 0.06, 0.04, 0x12303a, 0x2e5c58);
+    this.stream = { x1: 25, x2: 35 };
+    for (const bz of [-20, 40]) {
+      this.box(13, 0.3, 3.4, woodM, 30, 0.7, bz);
+      this.box(13, 0.9, 0.24, woodM, 30, 1.0, bz - 1.7, { noMinimap: true });
+      this.box(13, 0.9, 0.24, woodM, 30, 1.0, bz + 1.7, { noMinimap: true });
+      for (const ex of [24, 36]) {
+        this.box(3, 0.35, 3.4, woodM, ex, 0, bz, { noMinimap: true });
+        this.box(3, 0.35, 3.4, woodM, ex + (ex < 30 ? -1 : 1) * 2, 0.35, bz, { noMinimap: true });
+      }
+    }
+
+    // ---------- 山脊直升机坪（西北高地，撤离点） ----------
+    this.box(36, 6, 36, mossStone, -72, 0, -72);
+    // 台阶从山脚向南展开：最高一级与山顶(y=6)齐平并贴合崖面
+    for (let i = 0; i < 12; i++) {
+      this.box(6, (i + 1) * 0.5, 0.66, mossStone, -72, 0, -53.67 + (11 - i) * 0.66, { noMinimap: true });
+    }
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(5.5, 5.5, 0.26, 26), stoneM);
+    pad.position.set(-72, 6.13, -72);
+    pad.receiveShadow = true;
+    S.add(pad);
+    this.addCollider(-72, 6.13, -72, 11, 0.26, 11);
+    const hRing = new THREE.Mesh(new THREE.TorusGeometry(3.6, 0.28, 8, 30),
+      new THREE.MeshStandardMaterial({ color: 0xd8d2c0, roughness: 0.8 }));
+    hRing.rotation.x = -Math.PI / 2;
+    hRing.position.set(-72, 6.3, -72);
+    S.add(hRing);
+    this._lamp(-72, 8, -72, 0xfff0c8, 30, 20);
+
+    // ---------- 废弃研究站（东北核心建筑群） ----------
+    const rx = 52, rz = -42;
+    this.box(24, 3.6, 0.5, wallM, rx, 0, rz - 8);
+    this.box(0.5, 3.6, 16, wallM, rx - 12, 0, rz);
+    this.box(9, 3.6, 0.5, wallM, rx - 7.5, 0, rz + 8);
+    this.box(9, 3.6, 0.5, wallM, rx + 7.5, 0, rz + 8);
+    this.box(0.5, 1.6, 6, wallM, rx, 2, rz + 8, { noMinimap: true });
+    this.box(0.5, 3.6, 5.5, wallM, rx + 12, 0, rz - 5.2);
+    this.box(0.5, 3.6, 5.5, wallM, rx + 12, 0, rz + 5.2);
+    this.box(0.5, 1.8, 5.5, wallM, rx + 12, 1.8, rz, { noMinimap: true });
+    this.box(24.6, 0.4, 9, stoneM, rx, 3.6, rz - 4, { solid: false });
+    this.box(24.6, 0.4, 9, stoneM, rx, 3.6, rz + 4, { solid: false });
+    this.box(0.5, 3.6, 9, wallM, rx - 4, 0, rz);
+    this.box(6, 1.1, 1.4, steelM, rx + 6, 0, rz - 5, { noMinimap: true });
+    this.box(2, 2.6, 2, steelM, rx - 9, 0, rz - 5);
+    this._lamp(rx, 3.3, rz, 0xd8f0e0, 30, 18);
+    this._lamp(rx - 6, 3.3, rz - 5, 0xd8f0e0, 24, 14);
+    this.addContactShadow(rx, rz, 28, 20, 0.4);
+    const ax = 52, az = -62;
+    this.box(10, 3.2, 0.5, wallM, ax, 0, az - 4);
+    this.box(0.5, 3.2, 8, wallM, ax - 5, 0, az);
+    this.box(0.5, 3.2, 8, wallM, ax + 5, 0, az);
+    this.box(3.4, 3.2, 0.5, wallM, ax - 3.3, 0, az + 4);
+    this.box(3.4, 3.2, 0.5, wallM, ax + 3.3, 0, az + 4);
+    this.box(10.6, 0.4, 8.6, stoneM, ax, 3.2, az, { solid: false });
+    this._lamp(ax, 3, az, 0xd8f0e0, 22, 14);
+    this.addContactShadow(ax, az, 13, 11, 0.4);
+
+    // ---------- 树屋群落（西部，平台 y=5 + 绳桥） ----------
+    const treehouse = (x, z) => {
+      for (const [lx, lz] of [[x - 1.8, z - 1.8], [x + 1.8, z - 1.8], [x - 1.8, z + 1.8], [x + 1.8, z + 1.8]]) {
+        this.box(0.4, 5, 0.4, woodM, lx, 0, lz, { noMinimap: true });
+      }
+      this.box(4.6, 0.32, 4.6, woodM, x, 5, z);
+      this.box(4.6, 0.8, 0.16, woodM, x, 5.3, z - 2.3, { noMinimap: true });
+      // 南侧围栏中间留 1.6m 入口（与爬梯对齐）
+      this.box(1.5, 0.8, 0.16, woodM, x - 1.55, 5.3, z + 2.3, { noMinimap: true });
+      this.box(1.5, 0.8, 0.16, woodM, x + 1.55, 5.3, z + 2.3, { noMinimap: true });
+      this.box(0.16, 0.8, 4.6, woodM, x - 2.3, 5.3, z, { noMinimap: true });
+      this.box(0.16, 0.8, 4.6, woodM, x + 2.3, 5.3, z, { noMinimap: true });
+      // 爬梯（南侧台阶：由外向内升高，顶步紧贴平台边；0.62m 深防止探测点碰到上一级立面）
+      for (let i = 0; i < 10; i++) {
+        this.box(1.4, 0.5, 0.62, woodM, x, i * 0.5, z + 2.7 + (9 - i) * 0.62, { noMinimap: true });
+      }
+      this.addContactShadow(x, z, 7, 7, 0.35);
+      this._lamp(x, 4.9, z, 0xffe8c0, 16, 10);
+    };
+    [[-52, 22], [-38, 30], [-46, 42], [-26, 18]].forEach(([x, z]) => treehouse(x, z));
+    const ropeBridge = (x1, z1, x2, z2) => {
+      const n = Math.floor(Math.hypot(x2 - x1, z2 - z1) / 1.3);
+      for (let i = 1; i < n; i++) {
+        const tt = i / n;
+        this.box(1.1, 0.14, 0.9, woodM, x1 + (x2 - x1) * tt, 5.02, z1 + (z2 - z1) * tt, { ry: -Math.atan2(z2 - z1, x2 - x1), noMinimap: true });
+      }
+    };
+    ropeBridge(-52, 22, -38, 30);
+    ropeBridge(-38, 30, -46, 42);
+
+    // ---------- 古庙遗迹（南部） ----------
+    const tx = 10, tz = 62;
+    this.box(18, 1, 18, mossStone, tx, 0, tz);
+    // 台基前两级台阶（1m 台基需踏步）
+    this.box(4, 0.5, 0.7, mossStone, tx, 0, tz + 9.35, { noMinimap: true });
+    this.box(7, 3, 0.6, mossStone, tx - 4, 1, tz - 8.6);
+    this.box(5, 2.2, 0.6, mossStone, tx + 5, 1, tz - 8.6);
+    this.box(0.6, 3, 7, mossStone, tx - 8.6, 1, tz + 4);
+    this.box(0.6, 2.6, 5, mossStone, tx + 8.6, 1, tz - 4);
+    for (const [cx2, cz2, fallen] of [[tx - 6, tz - 6, 0], [tx, tz - 6, 0], [tx + 6, tz - 6, 1], [tx - 6, tz + 6, 1], [tx + 6, tz + 6, 0]]) {
+      if (fallen) {
+        this.box(0.9, 0.9, 4.2, mossStone, cx2, 1, cz2, { ry: Math.random() * 1.5, noMinimap: true });
+      } else {
+        const col = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.52, 4.4, 10), mossStone);
+        col.position.set(cx2, 3.2, cz2);
+        col.castShadow = true;
+        S.add(col);
+        this.addCollider(cx2, 3.2, cz2, 1, 4.4, 1);
+      }
+    }
+    this.box(6, 2.4, 0.5, mossStone, tx, 1, tz - 3);
+    this.box(0.5, 2.4, 6, mossStone, tx - 3, 1, tz);
+    this.box(0.5, 2.4, 6, mossStone, tx + 3, 1, tz);
+    this.box(2.2, 2.4, 0.5, mossStone, tx - 1.9, 1, tz + 3);
+    this.box(2.2, 2.4, 0.5, mossStone, tx + 1.9, 1, tz + 3);
+    this._lamp(tx, 1.9, tz, 0xffd9a0, 18, 12);
+    this.addContactShadow(tx, tz, 22, 22, 0.4);
+
+    // ---------- 伐木场（西部） ----------
+    const lx0 = -62, lz0 = -18;
+    for (const [px2, pz2] of [[lx0 - 3, lz0 - 2], [lx0 + 3, lz0 - 2], [lx0 - 3, lz0 + 2], [lx0 + 3, lz0 + 2]]) {
+      this.box(0.35, 3.2, 0.35, woodM, px2, 0, pz2, { noMinimap: true });
+    }
+    this.box(9, 0.3, 6.6, rustM, lx0, 3.2, lz0, { solid: false });
+    const logGeo = new THREE.CylinderGeometry(0.5, 0.5, 6, 9);
+    const logM = new THREE.MeshStandardMaterial({ map: woodTexture(512, 1, '#7a6444'), roughness: 0.95 });
+    for (const [ox, oy] of [[-0.9, 0.5], [0, 0.5], [0.9, 0.5], [-0.45, 1.5], [0.45, 1.5]]) {
+      const log = new THREE.Mesh(logGeo, logM);
+      log.rotation.z = Math.PI / 2;
+      log.position.set(lx0 + 8 + ox, oy, lz0 + 4);
+      log.castShadow = true;
+      S.add(log);
+      this.addCollider(lx0 + 8 + ox, oy, lz0 + 4, 6, 1, 1.1);
+    }
+    this.box(3, 1, 1.6, woodM, lx0 - 2, 0, lz0 + 5, { noMinimap: true });
+    this.box(0.4, 7, 0.4, steelM, lx0 + 4, 0, lz0 - 5, { noMinimap: true });
+    this.box(5, 0.35, 0.35, steelM, lx0 + 6, 6.6, lz0 - 5, { noMinimap: true });
+    this.addContactShadow(lx0 + 8, lz0 + 4, 8, 4, 0.4);
+
+    // ---------- 河畔码头（南缘，撤离点） ----------
+    this.box(5, 0.3, 14, woodM, 30, 0.7, 96);
+    for (const [px2, pz2] of [[28, 90], [32, 90], [28, 100], [32, 100]]) {
+      this.box(0.3, 1, 0.3, woodM, px2, 0, pz2, { noMinimap: true });
+    }
+    this.box(2.4, 1.1, 5.4, rustM, 37, 0.2, 96, { ry: 0.4 });
+    this.box(3, 0.35, 3.4, woodM, 30, 0, 88, { noMinimap: true });
+    this._lamp(30, 3, 96, 0xffe8c0, 26, 18);
+
+    // ---------- 公路检查站（东缘，撤离点） ----------
+    this.box(3.4, 2.6, 3.2, wallM, 100, 0, 20);
+    this.box(0.35, 1, 7, steelM, 96, 0, 24, { noMinimap: true });
+    this.box(0.35, 1, 7, steelM, 96, 0, 16, { noMinimap: true });
+    this._lamp(100, 4, 20, 0xffe8c0, 26, 16);
+
+    // ---------- 岩石点缀 ----------
+    const rockGeo = new THREE.DodecahedronGeometry(1, 0);
+    const rockM = new THREE.MeshStandardMaterial({ color: 0x6d756a, roughness: 0.95, flatShading: true });
+    for (const [px2, pz2, s] of [[8, -30, 1.6], [-18, -60, 2.2], [66, 10, 1.4], [-88, 40, 1.9], [42, 66, 1.3], [-14, 96, 1.7], [76, -66, 2.1], [-92, -34, 1.5]]) {
+      const r = new THREE.Mesh(rockGeo, rockM);
+      r.position.set(px2, s * 0.4, pz2);
+      r.scale.set(s, s * 0.8, s);
+      r.rotation.y = Math.random() * 3;
+      r.castShadow = true; r.receiveShadow = true;
+      S.add(r);
+      this.addCollider(px2, s * 0.4, pz2, s * 1.6, s * 0.8, s * 1.6);
+      this.addContactShadow(px2, pz2, s * 3, s * 3, 0.35);
+    }
+
+    // ---------- 巡逻 / 出生 / 撤离（须在植被种植前定义，树要避让） ----------
+    this.patrolPoints = [
+      new THREE.Vector3(52, 0, -42), new THREE.Vector3(40, 0, -52), new THREE.Vector3(67, 0, -34),
+      new THREE.Vector3(10, 0, 76), new THREE.Vector3(-2, 0, 50), new THREE.Vector3(22, 0, 76),
+      new THREE.Vector3(-46, 0, 34), new THREE.Vector3(-56, 0, 22), new THREE.Vector3(-34, 0, 26),
+      new THREE.Vector3(-62, 0, -18), new THREE.Vector3(-50, 0, -24), new THREE.Vector3(-72, 0, -6),
+      new THREE.Vector3(30, 0, 84), new THREE.Vector3(18, 0, 78), new THREE.Vector3(42, 0, 80),
+      new THREE.Vector3(-50, 0, -62), new THREE.Vector3(-52, 0, -78), new THREE.Vector3(-76, 0, -44),
+      new THREE.Vector3(78, 0, 30), new THREE.Vector3(88, 0, 16), new THREE.Vector3(66, 0, 44),
+      new THREE.Vector3(6, 0, -68), new THREE.Vector3(-12, 0, -44), new THREE.Vector3(48, 0, 6)
+    ];
+    this.spawnPoints = [
+      new THREE.Vector3(90, 0, 0), new THREE.Vector3(0, 0, -92),
+      new THREE.Vector3(-90, 0, 0), new THREE.Vector3(20, 0, 92),
+      new THREE.Vector3(-76, 0, 76), new THREE.Vector3(76, 0, -80)
+    ];
+    this.extractPoints = [
+      new THREE.Vector3(30, 0, 97),     // 河畔码头（乘船）
+      new THREE.Vector3(-72, 0, -72),   // 山脊直升机坪
+      new THREE.Vector3(104, 0, 20)     // 公路检查站
+    ];
+
+    // ---------- 植被（实例化渲染） ----------
+    this._plantJungle(S);
+
+    // ---------- 雨粒子 ----------
+    const rainGeo = new THREE.BufferGeometry();
+    const rainN = 520;
+    const rainPos = new Float32Array(rainN * 3);
+    for (let i = 0; i < rainN; i++) {
+      rainPos[i * 3] = (Math.random() - 0.5) * 70;
+      rainPos[i * 3 + 1] = Math.random() * 30;
+      rainPos[i * 3 + 2] = (Math.random() - 0.5) * 70;
+    }
+    rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
+    const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({
+      color: 0xb8d0da, size: 0.14, transparent: true, opacity: 0.5, sizeAttenuation: true
+    }));
+    rain.frustumCulled = false;
+    S.add(rain);
+    this.rain = rain;
+  }
+
+  // 丛林植被：乔木/灌木/草丛全部 InstancedMesh（几次 draw call）
+  _plantJungle(S) {
+    const placed = [];
+    // 事件与关键点位留空（坠机/空投需要开阔地，巡逻/出生/撤离点不能被树压住）
+    const keepClear = [
+      [-10, -22, 8], [62, 68, 8], [-78, 8, 8],
+      [2, 22, 6], [-52, -54, 6], [72, -12, 6], [28, 78, 6]
+    ];
+    for (const p of this.patrolPoints) keepClear.push([p.x, p.z, 3.2]);
+    for (const p of this.spawnPoints) keepClear.push([p.x, p.z, 4]);
+    for (const p of this.extractPoints) keepClear.push([p.x, p.z, 5]);
+    const okSpot = (x, z, minDist, pad = 2.4) => {
+      if (Math.abs(x) > 104 || Math.abs(z) > 104) return false;
+      if (x > 20 && x < 40) return false;               // 河谷留空
+      for (const p of placed) if (Math.hypot(p[0] - x, p[1] - z) < minDist) return false;
+      for (const k of keepClear) if (Math.hypot(k[0] - x, k[1] - z) < k[2]) return false;
+      for (const c of this.colliders) {
+        if (c.max.y < 0.3) continue;
+        if (x + pad > c.min.x && x - pad < c.max.x && z + pad > c.min.z && z - pad < c.max.z) return false;
+      }
+      return true;
+    };
+    const N = 170;
+    const trunkGeo = new THREE.CylinderGeometry(0.24, 0.4, 6, 6);
+    const trunkM = new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 0.95 });
+    const trunkIM = new THREE.InstancedMesh(trunkGeo, trunkM, N);
+    const canopyGeo = new THREE.SphereGeometry(1, 7, 6);
+    const canopyM = new THREE.MeshStandardMaterial({ roughness: 0.9 });
+    const c1IM = new THREE.InstancedMesh(canopyGeo, canopyM, N);
+    const c2IM = new THREE.InstancedMesh(canopyGeo, canopyM.clone(), N);
+    const m4 = new THREE.Matrix4();
+    const col = new THREE.Color();
+    let ti = 0, tries = 0;
+    while (ti < N && tries < 3200) {
+      tries++;
+      const x = (Math.random() - 0.5) * 206;
+      const z = (Math.random() - 0.5) * 206;
+      if (!okSpot(x, z, 4.2)) continue;
+      const s = 0.8 + Math.random() * 0.7;
+      m4.compose(new THREE.Vector3(x, 3 * s, z), new THREE.Quaternion(), new THREE.Vector3(s, s, s));
+      trunkIM.setMatrixAt(ti, m4);
+      m4.compose(new THREE.Vector3(x, (6.2 + Math.random() * 0.5) * s, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * 3), new THREE.Vector3(2.7 * s, 2.2 * s, 2.7 * s));
+      c1IM.setMatrixAt(ti, m4);
+      c1IM.setColorAt(ti, col.setHSL(0.3 + Math.random() * 0.05, 0.42, 0.24 + Math.random() * 0.1));
+      m4.compose(new THREE.Vector3(x + (Math.random() - 0.5), (8 + Math.random() * 0.6) * s, z + (Math.random() - 0.5)), new THREE.Quaternion(), new THREE.Vector3(2 * s, 1.7 * s, 2 * s));
+      c2IM.setMatrixAt(ti, m4);
+      c2IM.setColorAt(ti, col.setHSL(0.31 + Math.random() * 0.05, 0.46, 0.3 + Math.random() * 0.1));
+      this.addCollider(x, 3 * s, z, 0.9 * s, 6 * s, 0.9 * s);
+      placed.push([x, z]);
+      ti++;
+    }
+    trunkIM.castShadow = true; c1IM.castShadow = true; c2IM.castShadow = true;
+    S.add(trunkIM, c1IM, c2IM);
+
+    const BN = 240;
+    const bushGeo = new THREE.IcosahedronGeometry(1, 0);
+    const bushM = new THREE.MeshStandardMaterial({ roughness: 0.95, flatShading: true });
+    const bushIM = new THREE.InstancedMesh(bushGeo, bushM, BN);
+    let bi = 0; tries = 0;
+    while (bi < BN && tries < 2600) {
+      tries++;
+      const x = (Math.random() - 0.5) * 206, z = (Math.random() - 0.5) * 206;
+      if (!okSpot(x, z, 1.6, 1.2)) continue;
+      const s = 0.6 + Math.random() * 0.9;
+      m4.compose(new THREE.Vector3(x, 0.45 * s, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * 3), new THREE.Vector3(1.3 * s, 0.85 * s, 1.3 * s));
+      bushIM.setMatrixAt(bi, m4);
+      bushIM.setColorAt(bi, col.setHSL(0.3 + Math.random() * 0.06, 0.4, 0.2 + Math.random() * 0.1));
+      bi++;
+    }
+    S.add(bushIM);
+
+    const GN = 420;
+    const grassGeo = new THREE.PlaneGeometry(1.4, 1.0);
+    const grassM = new THREE.MeshStandardMaterial({
+      map: grassTexture(), alphaTest: 0.35, side: THREE.DoubleSide, roughness: 0.9
+    });
+    const grassIM = new THREE.InstancedMesh(grassGeo, grassM, GN);
+    let gi = 0; tries = 0;
+    while (gi < GN && tries < 3000) {
+      tries++;
+      const x = (Math.random() - 0.5) * 206, z = (Math.random() - 0.5) * 206;
+      if (!okSpot(x, z, 1.1, 0.4)) continue;
+      const s = 0.7 + Math.random() * 0.8;
+      m4.compose(new THREE.Vector3(x, 0.48 * s, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * 3.14), new THREE.Vector3(s, s, s));
+      grassIM.setMatrixAt(gi, m4);
+      gi++;
+    }
+    S.add(grassIM);
+    this.vegetation = { trees: ti, bushes: bi, grass: gi };
+  }
+
   // 土坯房：8×6，门朝南，平顶
   _house(x, z, wallM, roofM) {
     this.box(8, 3.2, 0.4, wallM, x, 0, z + 3);              // 后墙
@@ -598,15 +956,15 @@ export class World {
     this.addContactShadow(x, z, 11, 9, 0.45);
   }
 
-  _addWater(cx, cz, w, d, y) {
+  _addWater(cx, cz, w, d, y, bobAmp = 0.25, deep = 0x07222e, shallow = 0x14506a) {
     const S = this.scene;
-    const waterGeo = new THREE.PlaneGeometry(w, d, 64, 64);
+    const waterGeo = new THREE.PlaneGeometry(w, d, 48, 64);
     const waterMat = new THREE.ShaderMaterial({
       transparent: true,
       uniforms: {
         uTime: { value: 0 },
-        uDeep: { value: new THREE.Color(0x07222e) },
-        uShallow: { value: new THREE.Color(0x14506a) }
+        uDeep: { value: new THREE.Color(deep) },
+        uShallow: { value: new THREE.Color(shallow) }
       },
       vertexShader: `
         uniform float uTime;
@@ -635,7 +993,7 @@ export class World {
     water.rotation.x = -Math.PI / 2;
     water.position.set(cx, y, cz);
     S.add(water);
-    this.waters.push({ mesh: water, y });
+    this.waters.push({ mesh: water, y, bob: bobAmp });
     return water;
   }
 
@@ -683,11 +1041,29 @@ export class World {
     }
   }
 
-  update(t) {
+  update(t, dt = 0, playerPos = null) {
     for (const w of this.waters) {
       w.mesh.material.uniforms.uTime.value = t;
-      // 潮汐/水位缓慢波动（视觉）
-      w.mesh.position.y = w.y + Math.sin(t * 0.02) * 0.25;
+      // 潮汐/水流缓慢波动（视觉）
+      w.mesh.position.y = w.y + Math.sin(t * 0.02) * w.bob;
+    }
+    // 丛林雨：粒子跟随玩家下落循环
+    if (this.rain && playerPos && dt > 0) {
+      const pos = this.rain.geometry.attributes.position;
+      const p = playerPos;
+      for (let i = 0; i < pos.count; i++) {
+        let y = pos.getY(i) - 30 * dt;
+        let x = pos.getX(i) + 4 * dt;
+        if (y < p.y - 2) {
+          y = p.y + 26 + Math.random() * 4;
+          pos.setX(i, p.x + (Math.random() - 0.5) * 70);
+          pos.setZ(i, p.z + (Math.random() - 0.5) * 70);
+        }
+        if (Math.abs(x - p.x) > 38) pos.setX(i, p.x + (Math.random() - 0.5) * 60);
+        else pos.setX(i, x);
+        pos.setY(i, y);
+      }
+      pos.needsUpdate = true;
     }
   }
 }

@@ -20,7 +20,6 @@ export class HUD {
       gunName: document.getElementById('gun-name'),
       scopeOverlay: document.getElementById('scope-overlay'),
       crosshair: document.getElementById('crosshair'),
-      loreCount: document.getElementById('lore-count'),
       briefing: document.getElementById('briefing'),
       bfCode: document.getElementById('bf-code'),
       bfMap: document.getElementById('bf-map'),
@@ -113,11 +112,6 @@ export class HUD {
         if (d._life <= 0) d._busy = false;
       }
     }
-  }
-
-  // 档案收集进度
-  setLore(found, total) {
-    this.el.loreCount.textContent = `情报档案 ${found}/${total}`;
   }
 
   // 开局行动简报

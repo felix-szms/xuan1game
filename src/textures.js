@@ -200,6 +200,34 @@ export function plasterTexture(size = 512, repeat = 4, tint = '#6e7a72') {
     }, repeat, repeat));
 }
 
+// 草丛面片纹理（透明背景 + 数根草叶，配合 alphaTest 实例化渲染）
+export function grassTexture(size = 64) {
+  return cached('grass_blades', () => {
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, size, size);
+    for (let i = 0; i < 9; i++) {
+      const x = 6 + Math.random() * (size - 12);
+      const h = size * (0.55 + Math.random() * 0.4);
+      const lean = (Math.random() - 0.5) * 14;
+      const g = ctx.createLinearGradient(0, size, 0, size - h);
+      const hue = 88 + Math.random() * 26;
+      g.addColorStop(0, `hsl(${hue}, 42%, 24%)`);
+      g.addColorStop(1, `hsl(${hue}, 52%, 44%)`);
+      ctx.strokeStyle = g;
+      ctx.lineWidth = 2 + Math.random() * 2;
+      ctx.beginPath();
+      ctx.moveTo(x, size);
+      ctx.quadraticCurveTo(x + lean * 0.4, size - h * 0.6, x + lean, size - h);
+      ctx.stroke();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  });
+}
+
 // 径向接触阴影贴图（放在物件脚下，伪造环境光遮蔽）
 export function contactShadowTexture(size = 128) {
   const c = document.createElement('canvas');
